@@ -3,24 +3,19 @@
 import { cn } from "@/lib/utils";
 import type { RepoView } from "@/lib/state/store";
 import { ActionModal } from "./ActionModal";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  Check,
-  Copy,
   ExternalLink,
-  FileCode2,
   GitPullRequest,
-  MoreHorizontal,
   RefreshCw,
-  TerminalSquare,
 } from "lucide-react";
 
 export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "clean";
 
 export const ROW_GRID =
-  "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_36px]";
+  "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_72px]";
 
 function primaryAction(
   kind: GroupKind,
@@ -30,12 +25,12 @@ function primaryAction(
   if (kind === "push") return { label: "Push", action: "push" };
   if (kind === "pull") return { label: "Pull", action: "pull" };
   if (kind === "diverged") return { label: "Merge", action: "merge" };
-  if (kind === "attention") return { label: "Open", action: "open-editor" };
-  if (kind === "dirty") {
-    if (hasConflicts) return { label: "Resolve", action: "open-editor" };
-    if (hasRemote) return { label: "Commit & push", action: "commit-push" };
-    return { label: "Open", action: "open-editor" };
+  if (kind === "dirty" && !hasConflicts && hasRemote) {
+    return { label: "Commit & push", action: "commit-push" };
   }
+  // No primary button for: attention, dirty+conflicts, dirty+no-remote, clean.
+  // User handles those externally; the icon buttons (Refresh + Open on GitHub)
+  // are still available in the actions column.
   return { label: "", action: null };
 }
 
@@ -84,7 +79,6 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
           ROW_GRID,
         )}
       >
-        {/* Repo name + branch */}
         <div className="flex min-w-0 flex-col">
           <h3 className="truncate text-[14px] font-medium tracking-tight text-fg">
             {repo.displayName}
@@ -96,10 +90,8 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
           </span>
         </div>
 
-        {/* Sync ↑n ↓n */}
         <SyncCell ahead={ahead} behind={behind} hasUpstream={!!snap?.upstream} kind={kind} />
 
-        {/* Local changes */}
         <LocalCell
           dirty={dirtyTotal}
           newFiles={newFiles}
@@ -107,16 +99,13 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
           kind={kind}
         />
 
-        {/* Last commit subject + time */}
         <LastCommitCell
           subject={snap?.lastCommitSubject ?? null}
           ts={snap?.lastCommitTs ?? null}
         />
 
-        {/* PRs */}
         <PrCell count={snap?.openPrCount ?? 0} url={ghPrUrl} />
 
-        {/* Primary action */}
         {button.action ? (
           <button
             onClick={() => setModalAction(button.action)}
@@ -128,8 +117,6 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
                 "border-accent-pull/35 bg-accent-pull/10 text-accent-pull hover:border-accent-pull/55 hover:bg-accent-pull/20",
               kind === "diverged" &&
                 "border-accent-diverged/35 bg-accent-diverged/10 text-accent-diverged hover:border-accent-diverged/55 hover:bg-accent-diverged/20",
-              kind === "attention" &&
-                "border-accent-attention/35 bg-accent-attention/10 text-accent-attention hover:border-accent-attention/55 hover:bg-accent-attention/20",
               kind === "dirty" &&
                 "border-accent-dirty/35 bg-accent-dirty/10 text-accent-dirty hover:border-accent-dirty/55 hover:bg-accent-dirty/20",
             )}
@@ -140,11 +127,10 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
           <span />
         )}
 
-        {/* ⋯ menu */}
-        <RowMenu
+        <RowIcons
           ghUrl={ghUrl}
-          remoteUrl={snap?.remoteUrl ?? null}
-          onModalAction={(a) => setModalAction(a)}
+          repoId={repo.id}
+          csrfToken={csrfToken}
         />
       </div>
 
@@ -265,139 +251,80 @@ function PrCell({ count, url }: { count: number; url: string | null }) {
   );
 }
 
-interface RowMenuProps {
+function RowIcons({
+  ghUrl,
+  repoId,
+  csrfToken,
+}: {
   ghUrl: string | null;
-  remoteUrl: string | null;
-  onModalAction: (action: string) => void;
-}
+  repoId: number;
+  csrfToken: string;
+}) {
+  const [refreshState, setRefreshState] = useState<"idle" | "spinning" | "error">("idle");
 
-function RowMenu({ ghUrl, remoteUrl, onModalAction }: RowMenuProps) {
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const copyClone = async () => {
-    if (!remoteUrl) return;
+  const onRefresh = async () => {
+    if (refreshState === "spinning") return;
+    setRefreshState("spinning");
     try {
-      await navigator.clipboard.writeText(remoteUrl);
-      setCopied(true);
-      setTimeout(() => {
-        setCopied(false);
-        setOpen(false);
-      }, 1200);
+      const res = await fetch(`/api/repos/${repoId}/refresh`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+      });
+      if (!res.ok) {
+        setRefreshState("error");
+        setTimeout(() => setRefreshState("idle"), 1500);
+      } else {
+        setRefreshState("idle");
+      }
     } catch {
-      // ignore — clipboard requires secure context; localhost is fine
+      setRefreshState("error");
+      setTimeout(() => setRefreshState("idle"), 1500);
     }
   };
 
   return (
-    <div ref={containerRef} className="relative justify-self-end">
+    <div className="flex items-center justify-end gap-1">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-fg-dim opacity-0 transition-all hover:bg-bg-hover hover:text-fg group-hover:opacity-100 data-[open=true]:opacity-100"
-        data-open={open}
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
+        onClick={onRefresh}
+        title={
+          refreshState === "error"
+            ? "Refresh failed — see server logs"
+            : "Re-check this repo against GitHub"
+        }
+        aria-label="Refresh"
+        disabled={refreshState === "spinning"}
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+          refreshState === "error"
+            ? "text-accent-attention"
+            : "text-fg-dim hover:bg-bg-hover hover:text-fg",
+          refreshState === "spinning" && "cursor-wait",
+        )}
       >
-        <MoreHorizontal className="h-4 w-4" />
+        <RefreshCw
+          className={cn("h-3.5 w-3.5", refreshState === "spinning" && "animate-spin")}
+        />
       </button>
-
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-xl border border-border bg-bg-elevated shadow-2xl"
+      {ghUrl ? (
+        <a
+          href={ghUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open on GitHub"
+          aria-label="Open on GitHub"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
         >
-          <MenuItem
-            icon={<RefreshCw className="h-3.5 w-3.5" />}
-            label="Fetch from GitHub"
-            onClick={() => {
-              setOpen(false);
-              onModalAction("fetch");
-            }}
-          />
-          <MenuItem
-            icon={<FileCode2 className="h-3.5 w-3.5" />}
-            label="Open in editor"
-            onClick={() => {
-              setOpen(false);
-              onModalAction("open-editor");
-            }}
-          />
-          <MenuItem
-            icon={<TerminalSquare className="h-3.5 w-3.5" />}
-            label="Open in terminal"
-            onClick={() => {
-              setOpen(false);
-              onModalAction("open-terminal");
-            }}
-          />
-          <div className="my-1 h-px bg-border-subtle" />
-          <MenuItem
-            icon={<ExternalLink className="h-3.5 w-3.5" />}
-            label="Open on GitHub"
-            disabled={!ghUrl}
-            onClick={() => {
-              if (!ghUrl) return;
-              window.open(ghUrl, "_blank", "noopener,noreferrer");
-              setOpen(false);
-            }}
-          />
-          <MenuItem
-            icon={copied ? <Check className="h-3.5 w-3.5 text-accent-clean" /> : <Copy className="h-3.5 w-3.5" />}
-            label={copied ? "Copied!" : "Copy clone URL"}
-            disabled={!remoteUrl}
-            onClick={copyClone}
-          />
-        </div>
+          <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+      ) : (
+        <span
+          className="inline-flex h-7 w-7 items-center justify-center text-fg-dim opacity-30"
+          title="No GitHub remote"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+        </span>
       )}
     </div>
-  );
-}
-
-function MenuItem({
-  icon,
-  label,
-  onClick,
-  disabled,
-}: {
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      role="menuitem"
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12.5px] text-fg-muted transition-colors",
-        disabled
-          ? "cursor-not-allowed opacity-40"
-          : "hover:bg-bg-hover hover:text-fg",
-      )}
-    >
-      <span className="text-fg-dim">{icon}</span>
-      {label}
-    </button>
   );
 }
