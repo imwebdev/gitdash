@@ -40,8 +40,33 @@ function writeCache(key: string, etag: string, body: string, now: number): void 
 }
 
 /**
+ * Run `gh api --include` and ALWAYS return whatever stdout we got, even if
+ * the process exited non-zero. `gh` exits 1 on non-2xx HTTP responses
+ * (including 304 Not Modified for conditional requests), but the full
+ * response headers + body are still written to stdout. The previous
+ * implementation treated those exits as fatal failures and dropped the
+ * payload, which silently broke ETag caching — every cached repo got
+ * classified as remoteState="unknown" instead of using the cached SHA.
+ *
+ * Bug history: closes #17.
+ */
+async function runGhApiIncluded(
+  args: string[],
+  timeoutMs: number,
+): Promise<{ raw: string; thrownStderr: string }> {
+  try {
+    const res = await runGh(args, { timeoutMs });
+    return { raw: res.stdout, thrownStderr: "" };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    return { raw: e.stdout ?? "", thrownStderr: e.stderr ?? "" };
+  }
+}
+
+/**
  * Fetch remote tip SHA for a branch using `gh api` with ETag caching.
- * Returns null on auth/404/422 — logs to stderr. Rate-limit-aware via 304 caching.
+ * Returns null on auth / 404 / parse failure. 304 cache-hits use the
+ * cached body's SHA.
  */
 async function fetchRemoteSha(slug: GitHubSlug, branch: string): Promise<{ sha: string; fromCache: boolean } | null> {
   const key = cacheKey(slug, branch);
@@ -58,35 +83,27 @@ async function fetchRemoteSha(slug: GitHubSlug, branch: string): Promise<{ sha: 
     args.push("-H", `If-None-Match: ${cached.etag}`);
   }
 
-  let stdout: string;
-  try {
-    const res = await runGh(args, { timeoutMs: 15_000 });
-    stdout = res.stdout;
-  } catch (err) {
-    const e = err as { stderr?: string };
-    const stderr = e.stderr ?? "";
-    if (/404/.test(stderr)) return null;
-    if (/403/.test(stderr) && cached) {
-      try {
-        const parsed = JSON.parse(cached.body_json) as { sha?: string };
-        if (parsed.sha) return { sha: parsed.sha, fromCache: true };
-      } catch {
-        // fall through
-      }
-    }
+  const { raw, thrownStderr } = await runGhApiIncluded(args, 15_000);
+
+  // No payload at all → genuine failure (network, command not found, etc.)
+  if (!raw) {
+    if (/404/.test(thrownStderr)) return null;
+    console.error(`[gh] fetchRemoteSha empty payload for ${slug.owner}/${slug.name}@${branch}: ${thrownStderr.trim()}`);
     return null;
   }
 
-  const { statusCode, etag, body } = parseIncludedResponse(stdout);
+  const { statusCode, etag, body } = parseIncludedResponse(raw);
+
   if (statusCode === 304 && cached) {
     try {
       const parsed = JSON.parse(cached.body_json) as { sha?: string };
       if (parsed.sha) return { sha: parsed.sha, fromCache: true };
     } catch {
-      return null;
+      // cached body unparseable — fall through and treat as miss
     }
     return null;
   }
+
   if (statusCode >= 200 && statusCode < 300) {
     try {
       const parsed = JSON.parse(body) as { sha?: string };
@@ -95,6 +112,17 @@ async function fetchRemoteSha(slug: GitHubSlug, branch: string): Promise<{ sha: 
       return { sha: parsed.sha, fromCache: false };
     } catch {
       return null;
+    }
+  }
+
+  // 4xx/5xx → log and fall back to cached SHA if available, else null
+  console.error(`[gh] fetchRemoteSha ${statusCode} for ${slug.owner}/${slug.name}@${branch}`);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached.body_json) as { sha?: string };
+      if (parsed.sha) return { sha: parsed.sha, fromCache: true };
+    } catch {
+      // fall through
     }
   }
   return null;
@@ -154,18 +182,29 @@ export async function compareWithRemote(
   ];
   if (cachedCmp) args.push("-H", `If-None-Match: ${cachedCmp.etag}`);
 
-  try {
-    const res = await runGh(args, { timeoutMs: 15_000 });
-    const parsed = parseIncludedResponse(res.stdout);
-    if (parsed.statusCode === 304 && cachedCmp) {
+  const { raw, thrownStderr } = await runGhApiIncluded(args, 15_000);
+  if (!raw) {
+    console.error(`[gh] compareWithRemote empty payload for ${slug.owner}/${slug.name}: ${thrownStderr.trim()}`);
+    return { state: "unknown", ahead: 0, behind: 0, remoteSha: remote.sha, localSha, checkedAt: now };
+  }
+
+  const parsed = parseIncludedResponse(raw);
+
+  if (parsed.statusCode === 304 && cachedCmp) {
+    try {
       const body = JSON.parse(cachedCmp.body_json) as {
         ahead_by?: number;
         behind_by?: number;
         status?: string;
       };
       return comparisonFromBody(body, remote.sha, localSha, now);
+    } catch {
+      // cached body unparseable — fall through to unknown
     }
-    if (parsed.statusCode >= 200 && parsed.statusCode < 300) {
+  }
+
+  if (parsed.statusCode >= 200 && parsed.statusCode < 300) {
+    try {
       const body = JSON.parse(parsed.body) as {
         ahead_by?: number;
         behind_by?: number;
@@ -173,9 +212,13 @@ export async function compareWithRemote(
       };
       if (parsed.etag) writeCache(compareKey, parsed.etag, parsed.body, now);
       return comparisonFromBody(body, remote.sha, localSha, now);
+    } catch {
+      // body parse fail → unknown
     }
-  } catch {
-    // fallthrough
+  }
+
+  if (parsed.statusCode >= 400) {
+    console.error(`[gh] compareWithRemote ${parsed.statusCode} for ${slug.owner}/${slug.name}`);
   }
   return { state: "unknown", ahead: 0, behind: 0, remoteSha: remote.sha, localSha, checkedAt: now };
 }
