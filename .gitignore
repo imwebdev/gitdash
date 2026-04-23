@@ -18,3 +18,8 @@ data/
 
 # Personal Claude Code overrides
 .claude/settings.local.json
+
+# Screenshots + playwright artifacts (design iteration noise)
+.playwright-mcp/
+*.png
+!/app/icon.svg

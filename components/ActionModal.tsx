@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RepoView } from "@/lib/state/store";
 import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface Props {
   repo: RepoView;
@@ -15,11 +16,23 @@ type Phase = "confirm" | "running" | "done" | "error";
 
 const DESTRUCTIVE_CONFIRMATION_LIMIT = 10;
 
+const COPY: Record<string, { verb: string; confirm?: string }> = {
+  fetch: { verb: "Asking GitHub what's new" },
+  pull: { verb: "Downloading new commits" },
+  push: { verb: "Pushing your commits to GitHub" },
+  merge: {
+    verb: "Merging with GitHub",
+    confirm:
+      "This will combine GitHub's new commits with yours, creating a merge commit. Conflicts (if any) will be left in your working tree for you to resolve.",
+  },
+  "open-editor": { verb: "Opening in your editor" },
+};
+
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const snap = repo.snapshot;
+  const pushCount = snap?.remoteAhead ?? snap?.ahead ?? 0;
   const needsConfirm =
-    action === "merge" ||
-    (action === "push" && (snap?.remoteAhead ?? snap?.ahead ?? 0) > DESTRUCTIVE_CONFIRMATION_LIMIT);
+    action === "merge" || (action === "push" && pushCount > DESTRUCTIVE_CONFIRMATION_LIMIT);
 
   const [phase, setPhase] = useState<Phase>(needsConfirm ? "confirm" : "running");
   const [log, setLog] = useState<string[]>([]);
@@ -83,27 +96,30 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
+  const copy = COPY[action] ?? { verb: action };
+
   return (
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-up"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[min(80vh,700px)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
+        className="flex max-h-[min(80vh,720px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <header className="flex items-start justify-between gap-3 border-b border-border-subtle px-6 py-5">
           <div className="min-w-0">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">
-              git {action}
-            </div>
-            <div className="truncate text-sm font-medium">{repo.repoPath}</div>
+            <p className="text-[12px] uppercase tracking-wider text-fg-dim">{copy.verb}</p>
+            <h2 className="display mt-1 text-[22px] leading-tight text-fg">{repo.displayName}</h2>
+            {snap?.branch && (
+              <p className="mono mt-1 text-[12px] text-fg-dim">on {snap.branch}</p>
+            )}
           </div>
           <button
             onClick={onClose}
-            className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-muted/50"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted hover:bg-bg-hover hover:text-fg"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -111,21 +127,29 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
         </header>
 
         {phase === "confirm" && (
-          <div className="flex flex-col gap-3 p-4 text-sm">
-            <p className="text-muted-foreground">
+          <div className="flex flex-col gap-4 px-6 py-6">
+            <p className="text-[14px] leading-relaxed text-fg-muted">
               {action === "merge"
-                ? `Merge origin/${snap?.branch ?? "<branch>"} into current branch with a merge commit (--no-ff). Conflicts will be left in the worktree for you to resolve.`
-                : `Push ${snap?.remoteAhead ?? snap?.ahead} commits to origin/${snap?.branch ?? "<branch>"}. Continue?`}
+                ? copy.confirm
+                : `You're about to push ${pushCount} commit${pushCount === 1 ? "" : "s"} to GitHub. That's a lot — just making sure.`}
             </p>
-            <div className="flex justify-end gap-2">
-              <button onClick={onClose} className="rounded border border-border px-3 py-1.5 text-sm hover:bg-muted/50">
+            <div className="mt-2 flex justify-end gap-3">
+              <button
+                onClick={onClose}
+                className="rounded-full border border-border px-4 py-1.5 text-[13px] font-medium text-fg-muted hover:border-fg-muted hover:text-fg"
+              >
                 Cancel
               </button>
               <button
                 onClick={() => setPhase("running")}
-                className="rounded bg-foreground px-3 py-1.5 text-sm text-background hover:opacity-90"
+                className={cn(
+                  "rounded-full border px-5 py-1.5 text-[13px] font-medium transition-all",
+                  action === "merge"
+                    ? "border-accent-diverged/45 bg-accent-diverged/15 text-accent-diverged hover:bg-accent-diverged/25"
+                    : "border-accent-push/45 bg-accent-push/15 text-accent-push hover:bg-accent-push/25",
+                )}
               >
-                Run
+                {action === "merge" ? "Merge anyway" : "Push anyway"}
               </button>
             </div>
           </div>
@@ -134,20 +158,28 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
         {phase !== "confirm" && (
           <pre
             ref={logRef}
-            className="flex-1 overflow-auto whitespace-pre-wrap break-words bg-background p-4 text-xs leading-relaxed"
+            className="mono flex-1 overflow-auto whitespace-pre-wrap break-words border-b border-border-subtle bg-bg px-6 py-4 text-[12px] leading-relaxed text-fg-muted"
           >
-            {log.length === 0 ? <span className="text-muted-foreground">starting…</span> : log.join("\n")}
+            {log.length === 0 ? <span className="text-fg-dim">starting…</span> : log.join("\n")}
           </pre>
         )}
 
         {phase !== "confirm" && (
-          <footer className="flex items-center justify-between border-t border-border px-4 py-2 text-xs text-muted-foreground">
-            <div>
-              {phase === "running" && "running…"}
-              {phase === "done" && "done (exit 0)"}
-              {phase === "error" && `error${exitCode !== null ? ` (exit ${exitCode})` : ""}`}
+          <footer className="flex items-center justify-between px-6 py-3 text-[12px]">
+            <div className={cn(
+              "uppercase tracking-wider",
+              phase === "running" && "text-fg-dim",
+              phase === "done" && "text-accent-clean",
+              phase === "error" && "text-accent-attention",
+            )}>
+              {phase === "running" && "running"}
+              {phase === "done" && "done"}
+              {phase === "error" && `error${exitCode !== null ? ` · exit ${exitCode}` : ""}`}
             </div>
-            <button onClick={onClose} className="rounded border border-border px-2 py-1 hover:bg-muted/50">
+            <button
+              onClick={onClose}
+              className="rounded-full border border-border px-3 py-1 text-fg-muted hover:border-fg-muted hover:text-fg"
+            >
               Close
             </button>
           </footer>

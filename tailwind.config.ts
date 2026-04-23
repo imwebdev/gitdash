@@ -10,41 +10,42 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "ui-serif", "Georgia", "serif"],
+        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+      },
       colors: {
+        bg: "hsl(var(--bg))",
+        "bg-elevated": "hsl(var(--bg-elevated))",
+        "bg-hover": "hsl(var(--bg-hover))",
+        fg: "hsl(var(--fg))",
+        "fg-muted": "hsl(var(--fg-muted))",
+        "fg-dim": "hsl(var(--fg-dim))",
         border: "hsl(var(--border))",
-        input: "hsl(var(--input))",
+        "border-subtle": "hsl(var(--border-subtle))",
         ring: "hsl(var(--ring))",
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
-        muted: {
-          DEFAULT: "hsl(var(--muted))",
-          foreground: "hsl(var(--muted-foreground))",
-        },
-        card: {
-          DEFAULT: "hsl(var(--card))",
-          foreground: "hsl(var(--card-foreground))",
-        },
-        status: {
-          clean: "hsl(215 16% 47%)",
-          ahead: "hsl(217 91% 60%)",
-          behind: "hsl(38 92% 50%)",
-          diverged: "hsl(0 84% 60%)",
-          dirty: "hsl(25 95% 53%)",
-          weird: "hsl(0 84% 60%)",
-          noupstream: "hsl(240 5% 65%)",
+        accent: {
+          push: "hsl(var(--push))",
+          pull: "hsl(var(--pull))",
+          diverged: "hsl(var(--diverged))",
+          attention: "hsl(var(--attention))",
+          dirty: "hsl(var(--dirty))",
+          clean: "hsl(var(--clean))",
         },
       },
-      fontFamily: {
-        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+      letterSpacing: {
+        tightest: "-0.04em",
+        "display-tight": "-0.02em",
       },
       keyframes: {
-        "status-stripe": {
-          "0%": { backgroundPosition: "0 0" },
-          "100%": { backgroundPosition: "40px 0" },
+        "fade-up": {
+          "0%": { opacity: "0", transform: "translateY(6px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
         },
       },
       animation: {
-        "status-stripe": "status-stripe 1.5s linear infinite",
+        "fade-up": "fade-up 480ms cubic-bezier(0.16, 1, 0.3, 1) both",
       },
     },
   },
