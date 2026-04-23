@@ -49,7 +49,7 @@ function buildGroups(repos: RepoView[]): { kind: GroupKind; headline: string; bo
         headline: headlineFor(kind, list.length),
         body: bodyFor(kind, list.length),
         repos: list,
-        defaultCollapsed: kind === "clean",
+        defaultCollapsed: false,
       };
     });
 }
