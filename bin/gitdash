@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# gitdash launcher
+# Binds to 0.0.0.0 so you can reach it from any device on the LAN.
+# Access is protected by Host header validation (RFC1918 + loopback) and
+# a CSRF token required on all mutating requests.
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$DIR"
+
+PORT="${GITDASH_PORT:-7420}"
+BIND="${GITDASH_BIND:-0.0.0.0}"
+
+# Generate or reuse CSRF token
+if [[ -z "${GITDASH_CSRF_TOKEN:-}" ]]; then
+  GITDASH_CSRF_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')"
+fi
+export GITDASH_CSRF_TOKEN
+export GITDASH_PORT="$PORT"
+
+MODE="${1:-start}"
+
+if [[ ! -d "$DIR/.next" && "$MODE" == "start" ]]; then
+  echo "[gitdash] no build found — running \`npm run build\` first"
+  npm run build
+fi
+
+# Figure out LAN IP for convenience output
+LAN_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' | head -1 || true)"
+
+printf '\n  gitdash ready\n'
+printf '    local:   http://127.0.0.1:%s\n' "$PORT"
+[[ -n "$LAN_IP" ]] && printf '    network: http://%s:%s\n' "$LAN_IP" "$PORT"
+printf '    csrf:    %s\n\n' "$GITDASH_CSRF_TOKEN"
+
+# Open browser on the local machine (non-fatal if missing)
+(sleep 1 && xdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1) &
+
+case "$MODE" in
+  start) exec npx next start -H "$BIND" -p "$PORT" ;;
+  dev)   exec npx next dev -H "$BIND" -p "$PORT" ;;
+  *)     echo "usage: gitdash [start|dev]" >&2; exit 1 ;;
+esac

@@ -1,0 +1,47 @@
+{
+  "name": "gitdash",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local per-machine dashboard showing every git repo's status vs GitHub with per-repo push/pull/merge actions.",
+  "bin": {
+    "gitdash": "./bin/gitdash"
+  },
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 7420",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p 7420",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "scan:once": "tsx scripts/scan-once.ts"
+  },
+  "dependencies": {
+    "next": "^15.0.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "better-sqlite3": "^11.5.0",
+    "chokidar": "^3.6.0",
+    "p-limit": "^6.1.0",
+    "zod": "^3.23.8",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.4",
+    "class-variance-authority": "^0.7.1",
+    "tailwindcss-animate": "^1.0.7",
+    "lucide-react": "^0.454.0",
+    "@radix-ui/react-dialog": "^1.1.2",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-tooltip": "^1.1.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "tailwindcss": "^3.4.14",
+    "postcss": "^8.4.49",
+    "autoprefixer": "^10.4.20",
+    "tsx": "^4.19.2",
+    "eslint": "^9.14.0",
+    "eslint-config-next": "^15.0.3"
+  }
+}
