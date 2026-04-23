@@ -21,7 +21,6 @@ const TINT: Record<GroupKind, string> = {
   diverged: "tint-diverged",
   attention: "tint-attention",
   dirty: "tint-dirty",
-  untracked: "bg-bg-elevated/40",
   clean: "tint-clean",
 };
 
@@ -31,12 +30,11 @@ const ACCENT: Record<GroupKind, string> = {
   diverged: "text-accent-diverged",
   attention: "text-accent-attention",
   dirty: "text-accent-dirty",
-  untracked: "text-fg-dim",
   clean: "text-accent-clean",
 };
 
 const EMPTY_COPY: Partial<Record<GroupKind, string>> = {
-  clean: "Nothing in sync yet. Push or commit something to land a repo here.",
+  clean: "No repos here yet. As soon as one is in sync with GitHub, it'll appear in this list.",
 };
 
 export function RepoGroup({

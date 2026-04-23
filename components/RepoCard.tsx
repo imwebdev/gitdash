@@ -17,7 +17,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 
-export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "untracked" | "clean";
+export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "clean";
 
 export const ROW_GRID =
   "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_36px]";
@@ -36,7 +36,6 @@ function primaryAction(
     if (hasRemote) return { label: "Commit & push", action: "commit-push" };
     return { label: "Open", action: "open-editor" };
   }
-  if (kind === "untracked") return { label: "Open folder", action: "open-editor" };
   return { label: "", action: null };
 }
 
@@ -133,8 +132,6 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
                 "border-accent-attention/35 bg-accent-attention/10 text-accent-attention hover:border-accent-attention/55 hover:bg-accent-attention/20",
               kind === "dirty" &&
                 "border-accent-dirty/35 bg-accent-dirty/10 text-accent-dirty hover:border-accent-dirty/55 hover:bg-accent-dirty/20",
-              kind === "untracked" &&
-                "border-fg-dim/30 bg-fg-dim/10 text-fg-muted hover:border-fg-dim/50 hover:bg-fg-dim/20",
             )}
           >
             {button.label}
