@@ -129,7 +129,8 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
 
         <RowIcons
           ghUrl={ghUrl}
-          onFetch={() => setModalAction("fetch")}
+          repoId={repo.id}
+          csrfToken={csrfToken}
         />
       </div>
 
@@ -252,20 +253,59 @@ function PrCell({ count, url }: { count: number; url: string | null }) {
 
 function RowIcons({
   ghUrl,
-  onFetch,
+  repoId,
+  csrfToken,
 }: {
   ghUrl: string | null;
-  onFetch: () => void;
+  repoId: number;
+  csrfToken: string;
 }) {
+  const [refreshState, setRefreshState] = useState<"idle" | "spinning" | "error">("idle");
+
+  const onRefresh = async () => {
+    if (refreshState === "spinning") return;
+    setRefreshState("spinning");
+    try {
+      const res = await fetch(`/api/repos/${repoId}/refresh`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+      });
+      if (!res.ok) {
+        setRefreshState("error");
+        setTimeout(() => setRefreshState("idle"), 1500);
+      } else {
+        setRefreshState("idle");
+      }
+    } catch {
+      setRefreshState("error");
+      setTimeout(() => setRefreshState("idle"), 1500);
+    }
+  };
+
   return (
     <div className="flex items-center justify-end gap-1">
-      <IconButton
-        title="Refresh sync state with GitHub"
-        ariaLabel="Refresh"
-        onClick={onFetch}
+      <button
+        type="button"
+        onClick={onRefresh}
+        title={
+          refreshState === "error"
+            ? "Refresh failed — see server logs"
+            : "Re-check this repo against GitHub"
+        }
+        aria-label="Refresh"
+        disabled={refreshState === "spinning"}
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+          refreshState === "error"
+            ? "text-accent-attention"
+            : "text-fg-dim hover:bg-bg-hover hover:text-fg",
+          refreshState === "spinning" && "cursor-wait",
+        )}
       >
-        <RefreshCw className="h-3.5 w-3.5" />
-      </IconButton>
+        <RefreshCw
+          className={cn("h-3.5 w-3.5", refreshState === "spinning" && "animate-spin")}
+        />
+      </button>
       {ghUrl ? (
         <a
           href={ghUrl}
@@ -278,34 +318,13 @@ function RowIcons({
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
       ) : (
-        <span className="inline-flex h-7 w-7 items-center justify-center text-fg-dim opacity-30" title="No GitHub remote">
+        <span
+          className="inline-flex h-7 w-7 items-center justify-center text-fg-dim opacity-30"
+          title="No GitHub remote"
+        >
           <ExternalLink className="h-3.5 w-3.5" />
         </span>
       )}
     </div>
-  );
-}
-
-function IconButton({
-  children,
-  onClick,
-  title,
-  ariaLabel,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  title: string;
-  ariaLabel: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-label={ariaLabel}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-full text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
-    >
-      {children}
-    </button>
   );
 }
