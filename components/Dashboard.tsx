@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { RepoView } from "@/lib/state/store";
 import { RepoGroup } from "./RepoGroup";
 import type { GroupKind } from "./RepoCard";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface Props {
   initialRepos: RepoView[];
@@ -174,6 +175,7 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
             />
             {connected ? "live" : "reconnecting"}
           </div>
+          <ThemeToggle />
         </div>
       </header>
 

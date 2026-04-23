@@ -2,26 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+  Dual theme — Purity-aligned greens/teals/slates.
+  All foreground/text combinations verified ≥7:1 against their bg = WCAG 2.1 AAA.
+  Computed ratios (text on bg):
+    LIGHT  fg 16.32 · fg-muted 11.99 · fg-dim 7.53
+           push 7.58 · pull 8.72 · diverged 8.31 · attention 7.31 · dirty 7.09 · clean 7.68
+    DARK   fg 17.06 · fg-muted 12.02 · fg-dim 8.12
+           push 12.07 · pull 9.90 · diverged 9.41 · attention 10.59 · dirty 12.38 · clean 11.71
+*/
+
 @layer base {
   :root {
-    /* Light theme — Purity-aligned: white surfaces, teal accent, slate text */
-    --bg: 0 0% 100%;                    /* page background — pure white */
-    --bg-elevated: 220 27% 98%;         /* card surfaces — barely-tinted */
-    --bg-hover: 210 17% 95%;            /* row hover */
-    --fg: 222 25% 14%;                  /* near-black text */
-    --fg-muted: 218 16% 35%;            /* secondary text */
-    --fg-dim: 213 25% 60%;              /* tertiary text / labels */
-    --border: 217 29% 91%;              /* card edges */
-    --border-subtle: 218 33% 95%;       /* row dividers */
-    --ring: 175 50% 46%;                /* focus ring — teal */
+    /* Light theme (default) */
+    --bg: 0 0% 100%;                    /* #FFFFFF */
+    --bg-elevated: 210 40% 98%;         /* #F7FAFC slate-50 */
+    --bg-hover: 214 32% 91%;            /* #E2E8F0 slate-200 */
+    --fg: 222 47% 14%;                  /* #1A202C slate-900 */
+    --fg-muted: 215 25% 27%;            /* #2D3748 slate-800 */
+    --fg-dim: 215 19% 35%;              /* #4A5568 slate-700 */
+    --border: 214 32% 84%;              /* #CBD5E0 slate-300 */
+    --border-subtle: 214 32% 91%;       /* #E2E8F0 slate-200 */
+    --ring: 173 80% 22%;                /* teal-800 focus */
 
-    /* State accents — tuned for AA contrast on white */
-    --push: 175 50% 38%;                /* teal: commits going out */
-    --pull: 209 70% 50%;                /* blue: commits coming in */
-    --diverged: 0 70% 50%;              /* red: history split */
-    --attention: 23 78% 45%;            /* burnt orange: needs intervention */
-    --dirty: 41 78% 42%;                /* dark amber: uncommitted work */
-    --clean: 144 50% 36%;               /* forest green: synced */
+    /* State accents — AAA-compliant on white */
+    --push: 174 69% 22%;                /* #115E59 teal-800 — going out */
+    --pull: 226 71% 40%;                /* #1E40AF blue-800 — coming in */
+    --diverged: 0 70% 35%;              /* #991B1B red-800 */
+    --attention: 17 79% 33%;            /* #9A3412 orange-800 */
+    --dirty: 26 84% 31%;                /* #92400E amber-800 */
+    --clean: 162 88% 20%;               /* #065F46 emerald-800 — Purity green */
+
+    /* Tint alphas */
+    --tint-alpha: 0.06;
+  }
+
+  .dark {
+    --bg: 222 47% 11%;                  /* #0F172A slate-900 */
+    --bg-elevated: 217 33% 17%;         /* #1E293B slate-800 */
+    --bg-hover: 215 25% 27%;            /* #334155 slate-700 */
+    --fg: 210 40% 98%;                  /* #F8FAFC slate-50 */
+    --fg-muted: 214 32% 84%;            /* #CBD5E0 slate-300 */
+    --fg-dim: 215 25% 70%;              /* #A3B0C2 — bumped lighter for AAA */
+    --border: 215 25% 27%;              /* #334155 slate-700 */
+    --border-subtle: 217 33% 22%;       /* between slate-800 and 700 */
+    --ring: 174 72% 65%;                /* teal-300 focus */
+
+    --push: 168 76% 64%;                /* #5EEAD4 teal-300 */
+    --pull: 213 94% 78%;                /* #93C5FD blue-300 */
+    --diverged: 0 94% 82%;              /* #FCA5A5 red-300 */
+    --attention: 28 96% 73%;            /* #FDBA74 orange-300 */
+    --dirty: 46 97% 65%;                /* #FCD34D amber-300 */
+    --clean: 156 72% 67%;               /* #6EE7B7 emerald-300 */
+
+    --tint-alpha: 0.10;
   }
 
   html, body {
@@ -39,7 +73,7 @@
   }
 
   ::selection {
-    background: hsl(var(--push) / 0.2);
+    background: hsl(var(--push) / 0.25);
     color: hsl(var(--fg));
   }
 }
@@ -63,18 +97,15 @@
     font-feature-settings: "zero", "calt";
   }
 
-  /* Grain overlay disabled on light theme — overlay blend mode reads as muddy */
-  .grain::before {
-    content: none;
-  }
+  /* Grain overlay disabled — reads muddy on light, distracting on dark */
+  .grain::before { content: none; }
 }
 
 @layer utilities {
-  /* Group section tints — slightly higher alpha than dark theme so they read on white */
-  .tint-push     { background-color: hsl(var(--push) / 0.04); }
-  .tint-pull     { background-color: hsl(var(--pull) / 0.04); }
-  .tint-diverged { background-color: hsl(var(--diverged) / 0.04); }
-  .tint-attention { background-color: hsl(var(--attention) / 0.05); }
-  .tint-dirty    { background-color: hsl(var(--dirty) / 0.04); }
-  .tint-clean    { background-color: hsl(var(--clean) / 0.03); }
+  .tint-push      { background-color: hsl(var(--push) / var(--tint-alpha)); }
+  .tint-pull      { background-color: hsl(var(--pull) / var(--tint-alpha)); }
+  .tint-diverged  { background-color: hsl(var(--diverged) / var(--tint-alpha)); }
+  .tint-attention { background-color: hsl(var(--attention) / var(--tint-alpha)); }
+  .tint-dirty     { background-color: hsl(var(--dirty) / var(--tint-alpha)); }
+  .tint-clean     { background-color: hsl(var(--clean) / var(--tint-alpha)); }
 }
