@@ -197,7 +197,7 @@ function ActionsPanel({ actions }: { actions: Action[] }) {
                 </span>
                 <span className="truncate text-[12px] text-fg">{a.action}</span>
                 <span className="mono shrink-0 text-[11px] text-fg-dim tabular-nums">
-                  {relativeTime(a.startedAt)}
+                  {relativeTime(Math.floor(a.startedAt / 1000))}
                   {failed && ` · exit ${a.exitCode}`}
                 </span>
               </li>
