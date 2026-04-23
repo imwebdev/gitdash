@@ -18,15 +18,19 @@ interface Group {
   defaultCollapsed?: boolean;
 }
 
-function groupFor(repo: RepoView): GroupKind | null {
+function groupFor(repo: RepoView): GroupKind {
   const s = repo.derivedState;
   if (s === "weird") return "attention";
   if (s === "diverged") return "diverged";
   if (s === "ahead") return "push";
   if (s === "behind") return "pull";
   if (s === "dirty") return "dirty";
-  if (s === "clean") return "clean";
-  return null; // no-upstream, unknown — hidden in main view (only shown when filtering)
+  // Everything else (clean, no-upstream, unknown) → "no updates needed".
+  // Comparison failures and missing remotes default to clean rather than
+  // surfacing an "unknown" bucket the user can't act on. If the comparison
+  // is truly stale and a real divergence is hiding, the user'll find out
+  // when they hit Fetch in the row's ⋯ menu.
+  return "clean";
 }
 
 function buildGroups(repos: RepoView[]): { kind: GroupKind; headline: string; body: string; repos: RepoView[]; defaultCollapsed: boolean }[] {
@@ -40,8 +44,9 @@ function buildGroups(repos: RepoView[]): { kind: GroupKind; headline: string; bo
   }
 
   const ordered: GroupKind[] = ["attention", "diverged", "push", "pull", "dirty", "clean"];
+  // "clean" always renders (with an empty-state placeholder when count = 0)
   return ordered
-    .filter((k) => (buckets.get(k) ?? []).length > 0)
+    .filter((k) => k === "clean" || (buckets.get(k) ?? []).length > 0)
     .map((kind) => {
       const list = (buckets.get(kind) ?? []).slice();
       list.sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -63,7 +68,9 @@ function headlineFor(kind: GroupKind, n: number): string {
     case "push": return `${plural === "repo" ? "wants" : "want"} to be pushed`;
     case "pull": return `${plural === "repo" ? "has" : "have"} incoming changes`;
     case "dirty": return `${plural === "repo" ? "has" : "have"} unsaved changes`;
-    case "clean": return `${plural === "repo" ? "is" : "are"} all synced`;
+    case "clean": return n === 0
+      ? "no updates needed"
+      : `${plural === "repo" ? "needs" : "need"} no updates`;
   }
 }
 
@@ -74,7 +81,7 @@ function bodyFor(kind: GroupKind, _n: number): string {
     case "push": return "You've committed work locally that GitHub doesn't have yet. Hit the button to send it up.";
     case "pull": return "Someone (possibly another machine of yours) pushed commits to GitHub. Download them to catch up.";
     case "dirty": return "Files you've edited but haven't committed. Click Open folder to see what changed and commit from your editor. Gitdash doesn't commit for you.";
-    case "clean": return "Nothing to do here. Click to peek at the list.";
+    case "clean": return "These repos are in sync — nothing to push or pull. If a comparison is stale or you suspect the data is wrong, hit Fetch in the row's ⋯ menu to re-check.";
   }
 }
 
@@ -126,7 +133,10 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
   const groups = useMemo(() => buildGroups(filtered), [filtered]);
 
   const actionableCount = useMemo(
-    () => groups.filter((g) => g.kind !== "clean" && g.kind !== "dirty").reduce((n, g) => n + g.repos.length, 0),
+    () =>
+      groups
+        .filter((g) => g.kind !== "clean" && g.kind !== "dirty")
+        .reduce((n, g) => n + g.repos.length, 0),
     [groups],
   );
 

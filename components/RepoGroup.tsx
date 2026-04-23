@@ -33,6 +33,10 @@ const ACCENT: Record<GroupKind, string> = {
   clean: "text-accent-clean",
 };
 
+const EMPTY_COPY: Partial<Record<GroupKind, string>> = {
+  clean: "No repos here yet. As soon as one is in sync with GitHub, it'll appear in this list.",
+};
+
 export function RepoGroup({
   kind,
   headline,
@@ -42,8 +46,11 @@ export function RepoGroup({
   defaultCollapsed = false,
 }: Props) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const isEmpty = repos.length === 0;
+  const emptyCopy = EMPTY_COPY[kind];
 
-  if (repos.length === 0) return null;
+  // Hide empty sections unless we have explicit empty-state copy for this kind.
+  if (isEmpty && !emptyCopy) return null;
 
   return (
     <section
@@ -53,12 +60,17 @@ export function RepoGroup({
       )}
     >
       <header
-        className="flex cursor-pointer items-start gap-5 px-6 pb-4 pt-6"
-        onClick={() => setCollapsed((v) => !v)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) =>
-          (e.key === "Enter" || e.key === " ") && setCollapsed((v) => !v)
+        className={cn(
+          "flex items-start gap-5 px-6 pb-4 pt-6",
+          !isEmpty && "cursor-pointer",
+        )}
+        onClick={isEmpty ? undefined : () => setCollapsed((v) => !v)}
+        role={isEmpty ? undefined : "button"}
+        tabIndex={isEmpty ? undefined : 0}
+        onKeyDown={
+          isEmpty
+            ? undefined
+            : (e) => (e.key === "Enter" || e.key === " ") && setCollapsed((v) => !v)
         }
       >
         <div
@@ -75,15 +87,23 @@ export function RepoGroup({
           <p className="mt-1 text-[13px] text-fg-muted">{body}</p>
         </div>
 
-        <ChevronRight
-          className={cn(
-            "mt-3 h-4 w-4 shrink-0 text-fg-dim transition-transform",
-            !collapsed && "rotate-90",
-          )}
-        />
+        {!isEmpty && (
+          <ChevronRight
+            className={cn(
+              "mt-3 h-4 w-4 shrink-0 text-fg-dim transition-transform",
+              !collapsed && "rotate-90",
+            )}
+          />
+        )}
       </header>
 
-      {!collapsed && (
+      {isEmpty && emptyCopy && (
+        <div className="border-t border-border-subtle px-6 py-5 text-[13px] italic text-fg-dim">
+          {emptyCopy}
+        </div>
+      )}
+
+      {!isEmpty && !collapsed && (
         <div className="border-t border-border-subtle">
           <div
             className={cn(
