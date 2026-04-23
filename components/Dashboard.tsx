@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RepoView, DerivedState } from "@/lib/state/store";
 import { RepoRow } from "./RepoRow";
+import { Legend } from "./Legend";
 
 interface Props {
   initialRepos: RepoView[];
@@ -123,15 +124,30 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
             </label>
           </div>
         </div>
-        <div className="grid grid-cols-[minmax(220px,1fr)_120px_90px_90px_110px_auto] gap-3 border-t border-border px-4 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-          <div>repo / branch</div>
-          <div>remote</div>
-          <div>dirty</div>
-          <div>last commit</div>
-          <div>github</div>
-          <div className="text-right">actions</div>
+        <div className="grid grid-cols-[minmax(180px,1fr)_100px_120px_80px_110px_minmax(460px,auto)] gap-3 border-t border-border px-4 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div title="Repo folder name and current branch. Second line shows the full path on disk.">
+            repo / branch
+          </div>
+          <div title="How many commits your local branch is ahead ↑ or behind ↓ GitHub.">
+            vs github
+          </div>
+          <div title="Files you've changed but haven't committed yet. Number in parens = brand-new untracked files.">
+            uncommitted
+          </div>
+          <div title="How long ago the most recent commit was made on the current branch.">
+            last commit
+          </div>
+          <div title="GitHub owner/name (parsed from the remote URL).">github slug</div>
+          <div
+            className="text-right"
+            title="Per-repo actions. Hover any button for what it does. Expand the help bar at top for full explanations."
+          >
+            actions
+          </div>
         </div>
       </header>
+
+      <Legend />
 
       <div>
         {filtered.length === 0 ? (

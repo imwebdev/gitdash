@@ -5,7 +5,15 @@ import { StatusBadge } from "./StatusBadge";
 import type { RepoView } from "@/lib/state/store";
 import { useState } from "react";
 import { ActionModal } from "./ActionModal";
-import { ArrowDownToLine, ArrowUpFromLine, GitMerge, RefreshCw, Archive, ArrowUpRightFromSquare, FolderOpen } from "lucide-react";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  GitMerge,
+  RefreshCw,
+  Archive,
+  ArrowUpRightFromSquare,
+  FolderOpen,
+} from "lucide-react";
 
 interface Props {
   repo: RepoView;
@@ -33,7 +41,7 @@ export function RepoRow({ repo, csrfToken }: Props) {
     <>
       <div
         className={cn(
-          "group grid grid-cols-[minmax(220px,1fr)_120px_90px_90px_110px_auto] items-center gap-3 border-b border-border px-4 py-2.5 text-sm hover:bg-muted/20",
+          "group grid grid-cols-[minmax(180px,1fr)_100px_120px_80px_110px_minmax(460px,auto)] items-center gap-3 border-b border-border px-4 py-2.5 text-sm hover:bg-muted/20",
           weird && "weird-stripes",
         )}
       >
@@ -74,18 +82,28 @@ export function RepoRow({ repo, csrfToken }: Props) {
           )}
         </div>
 
-        <div className="text-xs tabular-nums">
+        <div
+          className="text-xs tabular-nums"
+          title={
+            dirty > 0
+              ? `${dirty} file(s) changed but not committed yet${snap?.untracked ? `. ${snap.untracked} of those are brand-new (untracked) files.` : ""}`
+              : "no uncommitted changes"
+          }
+        >
           {dirty > 0 ? (
             <span className="text-status-dirty">
-              {dirty}
-              {snap?.untracked ? ` (${snap.untracked}?)` : ""}
+              {dirty} file{dirty === 1 ? "" : "s"}
+              {snap?.untracked ? ` (${snap.untracked} new)` : ""}
             </span>
           ) : (
             <span className="text-muted-foreground">—</span>
           )}
         </div>
 
-        <div className="text-xs tabular-nums text-muted-foreground">
+        <div
+          className="text-xs tabular-nums text-muted-foreground"
+          title={snap?.lastCommitSubject ?? ""}
+        >
           {relativeTime(snap?.lastCommitTs)}
         </div>
 
@@ -93,40 +111,55 @@ export function RepoRow({ repo, csrfToken }: Props) {
           {repo.githubOwner && repo.githubName ? `${repo.githubOwner}/${repo.githubName}` : "—"}
         </div>
 
-        <div className="flex items-center gap-1 opacity-70 transition group-hover:opacity-100">
-          <ActionButton title="Fetch" onClick={() => setAction("fetch")}>
-            <RefreshCw className="h-3.5 w-3.5" />
-          </ActionButton>
-          <ActionButton title="Pull (ff-only)" onClick={() => setAction("pull")}>
-            <ArrowDownToLine className="h-3.5 w-3.5" />
-          </ActionButton>
-          <ActionButton title="Push" onClick={() => setAction("push")}>
-            <ArrowUpFromLine className="h-3.5 w-3.5" />
-          </ActionButton>
-          <ActionButton title="Merge (--no-ff)" onClick={() => setAction("merge")}>
-            <GitMerge className="h-3.5 w-3.5" />
-          </ActionButton>
-          <ActionButton title="Stash push" onClick={() => setAction("stash-push")}>
-            <Archive className="h-3.5 w-3.5" />
-          </ActionButton>
+        <div className="flex items-center justify-end gap-1 overflow-x-auto">
+          <LabeledButton
+            icon={<RefreshCw className="h-3 w-3" />}
+            label="Fetch"
+            tooltip="Ask GitHub what's new without changing any of your files. Safe anytime."
+            onClick={() => setAction("fetch")}
+          />
+          <LabeledButton
+            icon={<ArrowDownToLine className="h-3 w-3" />}
+            label="Pull"
+            tooltip="Download new commits from GitHub. Only works if your history isn't diverged."
+            onClick={() => setAction("pull")}
+          />
+          <LabeledButton
+            icon={<ArrowUpFromLine className="h-3 w-3" />}
+            label="Push"
+            tooltip="Upload your local commits to GitHub."
+            onClick={() => setAction("push")}
+          />
+          <LabeledButton
+            icon={<GitMerge className="h-3 w-3" />}
+            label="Merge"
+            tooltip="Combine GitHub's new commits with yours when history has diverged. Asks to confirm first."
+            onClick={() => setAction("merge")}
+          />
+          <LabeledButton
+            icon={<Archive className="h-3 w-3" />}
+            label="Stash"
+            tooltip="Temporarily set aside your uncommitted changes (git stash) so you can Pull cleanly."
+            onClick={() => setAction("stash-push")}
+          />
           {repo.githubOwner && (
             <a
-              className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-muted/50"
-              title="Open on GitHub"
+              className="inline-flex h-6 items-center gap-1 rounded border border-border bg-muted/20 px-1.5 text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              title="Open this repo's page on github.com"
               href={`https://github.com/${repo.githubOwner}/${repo.githubName}`}
               target="_blank"
               rel="noreferrer"
             >
-              <ArrowUpRightFromSquare className="h-3.5 w-3.5" />
+              <ArrowUpRightFromSquare className="h-3 w-3" />
+              GitHub
             </a>
           )}
-          <button
-            title="Open in editor"
+          <LabeledButton
+            icon={<FolderOpen className="h-3 w-3" />}
+            label="Editor"
+            tooltip="Open this folder in VS Code (or whatever your $EDITOR is)."
             onClick={() => setAction("open-editor")}
-            className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-muted/50"
-          >
-            <FolderOpen className="h-3.5 w-3.5" />
-          </button>
+          />
         </div>
       </div>
 
@@ -142,22 +175,25 @@ export function RepoRow({ repo, csrfToken }: Props) {
   );
 }
 
-function ActionButton({
-  title,
+function LabeledButton({
+  icon,
+  label,
+  tooltip,
   onClick,
-  children,
 }: {
-  title: string;
+  icon: React.ReactNode;
+  label: string;
+  tooltip: string;
   onClick: () => void;
-  children: React.ReactNode;
 }) {
   return (
     <button
-      title={title}
+      title={tooltip}
       onClick={onClick}
-      className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+      className="inline-flex h-6 items-center gap-1 rounded border border-border bg-muted/20 px-1.5 text-[10px] uppercase tracking-wide text-muted-foreground hover:bg-muted/50 hover:text-foreground"
     >
-      {children}
+      {icon}
+      {label}
     </button>
   );
 }
