@@ -1,0 +1,23 @@
+[Unit]
+Description=gitdash — local git status dashboard
+Documentation=https://github.com/imwebdev/gitdash
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={{REPO_DIR}}
+ExecStart=/bin/bash {{REPO_DIR}}/bin/gitdash start
+EnvironmentFile=%h/.config/gitdash/env
+
+# Restart on crash; throttle to avoid tight loops
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Logging via journald — view with: journalctl --user -u gitdash -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
