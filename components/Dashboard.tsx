@@ -90,6 +90,16 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
   const [showSystem, setShowSystem] = useState(false);
   const [query, setQuery] = useState("");
   const [connected, setConnected] = useState(false);
+  const [expandedRepoId, setExpandedRepoId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (expandedRepoId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpandedRepoId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expandedRepoId]);
 
   useEffect(() => {
     const url = `/api/stream?showSystem=${showSystem ? "1" : "0"}`;
@@ -141,13 +151,13 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
   );
 
   return (
-    <main className="grain relative mx-auto max-w-[1280px] px-6 py-10 sm:px-10 sm:py-14">
-      <header className="mb-12 flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+    <main className="grain relative mx-auto max-w-[1280px] px-4 py-8 sm:px-10 sm:py-14">
+      <header className="mb-8 flex flex-col gap-5 sm:mb-12 sm:gap-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="display text-[44px] leading-none tracking-display-tight text-fg">
+          <h1 className="display text-[36px] leading-none tracking-display-tight text-fg sm:text-[44px]">
             gitdash
           </h1>
-          <p className="mt-3 max-w-lg text-[15px] text-fg-muted">
+          <p className="mt-3 max-w-lg text-[14px] text-fg-muted sm:text-[15px]">
             {actionableCount === 0 ? (
               <>Nothing urgent. <span className="display-italic text-fg">All caught up.</span></>
             ) : (
@@ -158,13 +168,13 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
           </p>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
           <input
             type="search"
             placeholder="filter repos"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="h-9 w-56 rounded-full border border-border bg-bg-elevated/60 px-4 text-[13px] text-fg placeholder:text-fg-dim focus:border-ring focus:outline-none"
+            className="h-11 w-full rounded-full border border-border bg-bg-elevated/60 px-4 text-[14px] text-fg placeholder:text-fg-dim focus:border-ring focus:outline-none sm:h-9 sm:w-56 sm:text-[13px]"
           />
           <label className="flex cursor-pointer select-none items-center gap-2 text-[12px] text-fg-muted">
             <input
@@ -202,6 +212,10 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
               repos={g.repos}
               csrfToken={csrfToken}
               defaultCollapsed={g.defaultCollapsed}
+              expandedRepoId={expandedRepoId}
+              onToggleRepo={(id) =>
+                setExpandedRepoId((cur) => (cur === id ? null : id))
+              }
             />
           ))}
         </div>

@@ -3,10 +3,12 @@
 import { cn } from "@/lib/utils";
 import type { RepoView } from "@/lib/state/store";
 import { ActionModal } from "./ActionModal";
+import { RowDetail } from "./RowDetail";
 import { useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  ChevronDown,
   ExternalLink,
   GitPullRequest,
   RefreshCw,
@@ -15,7 +17,7 @@ import {
 export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "clean";
 
 export const ROW_GRID =
-  "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_72px]";
+  "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_104px]";
 
 function primaryAction(
   kind: GroupKind,
@@ -28,9 +30,6 @@ function primaryAction(
   if (kind === "dirty" && !hasConflicts && hasRemote) {
     return { label: "Commit & push", action: "commit-push" };
   }
-  // No primary button for: attention, dirty+conflicts, dirty+no-remote, clean.
-  // User handles those externally; the icon buttons (Refresh + Open on GitHub)
-  // are still available in the actions column.
   return { label: "", action: null };
 }
 
@@ -45,13 +44,29 @@ function relativeTime(unix: number | null | undefined): string {
   return `${Math.floor(deltaSec / (86400 * 365))}y ago`;
 }
 
+function actionButtonClass(kind: GroupKind): string {
+  return cn(
+    "shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1 text-[12px] font-medium tracking-tight transition-all",
+    kind === "push" &&
+      "border-accent-push/35 bg-accent-push/10 text-accent-push hover:border-accent-push/55 hover:bg-accent-push/20",
+    kind === "pull" &&
+      "border-accent-pull/35 bg-accent-pull/10 text-accent-pull hover:border-accent-pull/55 hover:bg-accent-pull/20",
+    kind === "diverged" &&
+      "border-accent-diverged/35 bg-accent-diverged/10 text-accent-diverged hover:border-accent-diverged/55 hover:bg-accent-diverged/20",
+    kind === "dirty" &&
+      "border-accent-dirty/35 bg-accent-dirty/10 text-accent-dirty hover:border-accent-dirty/55 hover:bg-accent-dirty/20",
+  );
+}
+
 interface Props {
   repo: RepoView;
   kind: GroupKind;
   csrfToken: string;
+  expanded: boolean;
+  onToggle: () => void;
 }
 
-export function RepoCard({ repo, kind, csrfToken }: Props) {
+export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
   const [modalAction, setModalAction] = useState<string | null>(null);
   const snap = repo.snapshot;
 
@@ -68,70 +83,155 @@ export function RepoCard({ repo, kind, csrfToken }: Props) {
   const newFiles = snap?.untracked ?? 0;
   const conflicts = snap?.conflicted ?? 0;
   const hasRemote = !!(ghUrl ?? snap?.remoteUrl);
-
   const button = primaryAction(kind, hasRemote, conflicts > 0);
+  const prCount = snap?.openPrCount ?? 0;
+
+  const handleRowClick = (e: React.MouseEvent) => {
+    // If the click came from something inside the row that already handles clicks
+    // (button, a, input), stopPropagation on those elements prevents this.
+    // Any remaining click on the row surface → toggle.
+    if (e.defaultPrevented) return;
+    onToggle();
+  };
+
+  const handleRowKey = (e: React.KeyboardEvent) => {
+    // Only toggle when the row itself is focused; let buttons/links handle
+    // their own Enter/Space without bubbling into a row toggle.
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggle();
+    }
+  };
 
   return (
     <>
       <div
         className={cn(
-          "group relative grid items-center gap-x-4 px-6 py-3 transition-colors hover:bg-bg-hover/60",
-          ROW_GRID,
+          "group relative cursor-pointer transition-colors hover:bg-bg-hover/60",
+          expanded && "bg-bg-hover/40",
         )}
+        onClick={handleRowClick}
+        onKeyDown={handleRowKey}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`Toggle details for ${repo.displayName}`}
       >
-        <div className="flex min-w-0 flex-col">
-          <h3 className="truncate text-[14px] font-medium tracking-tight text-fg">
-            {repo.displayName}
-          </h3>
-          <span className="mono truncate text-[11px] text-fg-dim">
-            {snap?.detached
-              ? "(detached HEAD)"
-              : snap?.branch ?? "—"}
-          </span>
+        {/* Desktop grid row (>= sm). Preserves the existing layout verbatim. */}
+        <div
+          className={cn(
+            "hidden items-center gap-x-4 px-6 py-3 sm:grid",
+            ROW_GRID,
+          )}
+        >
+          <div className="flex min-w-0 flex-col">
+            <h3 className="truncate text-[14px] font-medium tracking-tight text-fg">
+              {repo.displayName}
+            </h3>
+            <span className="mono truncate text-[11px] text-fg-dim">
+              {snap?.detached ? "(detached HEAD)" : snap?.branch ?? "—"}
+            </span>
+          </div>
+
+          <SyncCell ahead={ahead} behind={behind} hasUpstream={!!snap?.upstream} />
+          <LocalCell dirty={dirtyTotal} newFiles={newFiles} conflicts={conflicts} />
+          <LastCommitCell
+            subject={snap?.lastCommitSubject ?? null}
+            ts={snap?.lastCommitTs ?? null}
+          />
+          <PrCell count={prCount} url={ghPrUrl} />
+
+          {button.action ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setModalAction(button.action);
+              }}
+              className={cn(actionButtonClass(kind), "justify-self-start")}
+            >
+              {button.label}
+            </button>
+          ) : (
+            <span />
+          )}
+
+          <RowIcons
+            ghUrl={ghUrl}
+            repoId={repo.id}
+            csrfToken={csrfToken}
+            expanded={expanded}
+          />
         </div>
 
-        <SyncCell ahead={ahead} behind={behind} hasUpstream={!!snap?.upstream} kind={kind} />
+        {/* Mobile stacked card (< sm). */}
+        <div className="flex flex-col gap-3 px-4 py-3.5 sm:hidden">
+          <div className="flex items-start gap-3">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <h3 className="truncate text-[15px] font-medium tracking-tight text-fg">
+                {repo.displayName}
+              </h3>
+              <span className="mono truncate text-[11px] text-fg-dim">
+                {snap?.detached ? "(detached HEAD)" : snap?.branch ?? "—"}
+              </span>
+            </div>
+            <RowIcons
+              ghUrl={ghUrl}
+              repoId={repo.id}
+              csrfToken={csrfToken}
+              expanded={expanded}
+            />
+          </div>
 
-        <LocalCell
-          dirty={dirtyTotal}
-          newFiles={newFiles}
-          conflicts={conflicts}
-          kind={kind}
-        />
-
-        <LastCommitCell
-          subject={snap?.lastCommitSubject ?? null}
-          ts={snap?.lastCommitTs ?? null}
-        />
-
-        <PrCell count={snap?.openPrCount ?? 0} url={ghPrUrl} />
-
-        {button.action ? (
-          <button
-            onClick={() => setModalAction(button.action)}
-            className={cn(
-              "shrink-0 justify-self-start whitespace-nowrap rounded-full border px-3.5 py-1 text-[12px] font-medium tracking-tight transition-all",
-              kind === "push" &&
-                "border-accent-push/35 bg-accent-push/10 text-accent-push hover:border-accent-push/55 hover:bg-accent-push/20",
-              kind === "pull" &&
-                "border-accent-pull/35 bg-accent-pull/10 text-accent-pull hover:border-accent-pull/55 hover:bg-accent-pull/20",
-              kind === "diverged" &&
-                "border-accent-diverged/35 bg-accent-diverged/10 text-accent-diverged hover:border-accent-diverged/55 hover:bg-accent-diverged/20",
-              kind === "dirty" &&
-                "border-accent-dirty/35 bg-accent-dirty/10 text-accent-dirty hover:border-accent-dirty/55 hover:bg-accent-dirty/20",
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px]">
+            <MobileSyncChip
+              ahead={ahead}
+              behind={behind}
+              hasUpstream={!!snap?.upstream}
+            />
+            <MobileLocalChip
+              dirty={dirtyTotal}
+              newFiles={newFiles}
+              conflicts={conflicts}
+            />
+            {prCount > 0 && ghPrUrl && (
+              <a
+                href={ghPrUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-fg-muted hover:text-fg"
+              >
+                <GitPullRequest className="h-3.5 w-3.5" />
+                <span className="tabular-nums">{prCount}</span>
+              </a>
             )}
-          >
-            {button.label}
-          </button>
-        ) : (
-          <span />
-        )}
+          </div>
 
-        <RowIcons
-          ghUrl={ghUrl}
-          repoId={repo.id}
-          csrfToken={csrfToken}
-        />
+          <div
+            className="mono truncate text-[11px] text-fg-muted"
+            title={snap?.lastCommitSubject ?? undefined}
+          >
+            {snap?.lastCommitSubject ?? "—"}
+            <span className="ml-2 text-fg-dim">
+              · {relativeTime(snap?.lastCommitTs ?? null)}
+            </span>
+          </div>
+
+          {button.action && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setModalAction(button.action);
+              }}
+              className={cn(actionButtonClass(kind), "h-10 self-start px-4 text-[13px]")}
+            >
+              {button.label}
+            </button>
+          )}
+        </div>
+
+        <RowDetail repoId={repo.id} open={expanded} />
       </div>
 
       {modalAction && (
@@ -150,12 +250,10 @@ function SyncCell({
   ahead,
   behind,
   hasUpstream,
-  kind: _kind,
 }: {
   ahead: number;
   behind: number;
   hasUpstream: boolean;
-  kind: GroupKind;
 }) {
   if (!hasUpstream) {
     return <span className="text-[12px] text-fg-dim">no upstream</span>;
@@ -185,12 +283,10 @@ function LocalCell({
   dirty,
   newFiles,
   conflicts,
-  kind: _kind,
 }: {
   dirty: number;
   newFiles: number;
   conflicts: number;
-  kind: GroupKind;
 }) {
   if (conflicts > 0) {
     return (
@@ -204,15 +300,69 @@ function LocalCell({
   }
   return (
     <div className="flex flex-col text-[12px] leading-tight">
-      <span className="text-accent-dirty">
-        {dirty} unsaved
-      </span>
-      {newFiles > 0 && (
-        <span className="text-fg-dim">
-          {newFiles} new
+      <span className="text-accent-dirty">{dirty} unsaved</span>
+      {newFiles > 0 && <span className="text-fg-dim">{newFiles} new</span>}
+    </div>
+  );
+}
+
+function MobileSyncChip({
+  ahead,
+  behind,
+  hasUpstream,
+}: {
+  ahead: number;
+  behind: number;
+  hasUpstream: boolean;
+}) {
+  if (!hasUpstream) {
+    return <span className="text-fg-dim">no upstream</span>;
+  }
+  if (ahead === 0 && behind === 0) {
+    return <span className="text-fg-dim">in sync</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-2 tabular-nums">
+      {ahead > 0 && (
+        <span className="inline-flex items-center gap-0.5 text-accent-push">
+          <ArrowUp className="h-3 w-3" />
+          {ahead}
         </span>
       )}
-    </div>
+      {behind > 0 && (
+        <span className="inline-flex items-center gap-0.5 text-accent-pull">
+          <ArrowDown className="h-3 w-3" />
+          {behind}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function MobileLocalChip({
+  dirty,
+  newFiles,
+  conflicts,
+}: {
+  dirty: number;
+  newFiles: number;
+  conflicts: number;
+}) {
+  if (conflicts > 0) {
+    return (
+      <span className="font-medium text-accent-attention">
+        {conflicts} conflict{conflicts === 1 ? "" : "s"}
+      </span>
+    );
+  }
+  if (dirty === 0) return null;
+  return (
+    <span className="text-accent-dirty">
+      {dirty} unsaved
+      {newFiles > 0 && (
+        <span className="ml-1 text-fg-dim">({newFiles} new)</span>
+      )}
+    </span>
   );
 }
 
@@ -242,6 +392,7 @@ function PrCell({ count, url }: { count: number; url: string | null }) {
       href={url}
       target="_blank"
       rel="noreferrer"
+      onClick={(e) => e.stopPropagation()}
       className="inline-flex items-center gap-1.5 text-[12px] text-fg-muted hover:text-fg"
       title={`${count} open pull request${count === 1 ? "" : "s"} on GitHub`}
     >
@@ -255,14 +406,17 @@ function RowIcons({
   ghUrl,
   repoId,
   csrfToken,
+  expanded,
 }: {
   ghUrl: string | null;
   repoId: number;
   csrfToken: string;
+  expanded: boolean;
 }) {
   const [refreshState, setRefreshState] = useState<"idle" | "spinning" | "error">("idle");
 
-  const onRefresh = async () => {
+  const onRefresh = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (refreshState === "spinning") return;
     setRefreshState("spinning");
     try {
@@ -283,7 +437,7 @@ function RowIcons({
   };
 
   return (
-    <div className="flex items-center justify-end gap-1">
+    <div className="flex items-center justify-end gap-0.5 sm:gap-1">
       <button
         type="button"
         onClick={onRefresh}
@@ -295,7 +449,7 @@ function RowIcons({
         aria-label="Refresh"
         disabled={refreshState === "spinning"}
         className={cn(
-          "inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors",
+          "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors sm:h-7 sm:w-7",
           refreshState === "error"
             ? "text-accent-attention"
             : "text-fg-dim hover:bg-bg-hover hover:text-fg",
@@ -311,20 +465,32 @@ function RowIcons({
           href={ghUrl}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
           title="Open on GitHub"
           aria-label="Open on GitHub"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg sm:h-7 sm:w-7"
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
       ) : (
         <span
-          className="inline-flex h-7 w-7 items-center justify-center text-fg-dim opacity-30"
+          className="inline-flex h-9 w-9 items-center justify-center text-fg-dim opacity-30 sm:h-7 sm:w-7"
           title="No GitHub remote"
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </span>
       )}
+      <span
+        aria-hidden="true"
+        className="inline-flex h-9 w-9 items-center justify-center text-fg-dim sm:h-7 sm:w-7"
+      >
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 transition-transform",
+            expanded && "rotate-180",
+          )}
+        />
+      </span>
     </div>
   );
 }
