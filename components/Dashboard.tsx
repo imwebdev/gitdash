@@ -66,8 +66,8 @@ function headlineFor(kind: GroupKind, n: number): string {
     case "pull": return `${plural === "repo" ? "has" : "have"} incoming changes`;
     case "dirty": return `${plural === "repo" ? "has" : "have"} unsaved changes`;
     case "untracked": return n === 0
-      ? "no GitHub link"
-      : `${plural === "repo" ? "is" : "are"} not linked to GitHub`;
+      ? "status unknown"
+      : `${plural === "repo" ? "has" : "have"} an unknown status`;
     case "clean": return n === 0
       ? "are all synced"
       : `${plural === "repo" ? "is" : "are"} all synced`;
@@ -81,7 +81,7 @@ function bodyFor(kind: GroupKind, _n: number): string {
     case "push": return "You've committed work locally that GitHub doesn't have yet. Hit the button to send it up.";
     case "pull": return "Someone (possibly another machine of yours) pushed commits to GitHub. Download them to catch up.";
     case "dirty": return "Files you've edited but haven't committed. Click Open folder to see what changed and commit from your editor. Gitdash doesn't commit for you.";
-    case "untracked": return "These repos either have no GitHub remote configured, or gitdash hasn't been able to compare them with GitHub yet. To publish a local-only repo, see the roadmap.";
+    case "untracked": return "Gitdash hasn't been able to determine sync state for these repos. They might have no GitHub remote configured, or the comparison call to GitHub silently failed (a known bug — see issue #17). Try the Fetch button in a row's ⋯ menu to re-check.";
     case "clean": return "Repos that match GitHub exactly. Nothing to do here.";
   }
 }
