@@ -33,6 +33,18 @@ export async function POST(
     return NextResponse.json({ error: "repo not found" }, { status: 404 });
   }
 
+  let commitMessage: string | undefined;
+  if (name === "commit-push") {
+    try {
+      const body = (await req.json()) as { commitMessage?: unknown };
+      if (typeof body.commitMessage === "string") {
+        commitMessage = body.commitMessage;
+      }
+    } catch {
+      // empty body is fine; sanitizer will use default
+    }
+  }
+
   const snap = getSnapshot(repoId);
   let run;
   try {
@@ -41,6 +53,7 @@ export async function POST(
       repoPath: repo.repoPath,
       action: name,
       branch: snap?.branch ?? null,
+      commitMessage,
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 400 });

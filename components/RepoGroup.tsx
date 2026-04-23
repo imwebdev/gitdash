@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { RepoView } from "@/lib/state/store";
-import { RepoCard, type GroupKind } from "./RepoCard";
+import { RepoCard, ROW_GRID, type GroupKind } from "./RepoCard";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +33,14 @@ const ACCENT: Record<GroupKind, string> = {
   clean: "text-accent-clean",
 };
 
-export function RepoGroup({ kind, headline, body, repos, csrfToken, defaultCollapsed = false }: Props) {
+export function RepoGroup({
+  kind,
+  headline,
+  body,
+  repos,
+  csrfToken,
+  defaultCollapsed = false,
+}: Props) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   if (repos.length === 0) return null;
@@ -50,7 +57,9 @@ export function RepoGroup({ kind, headline, body, repos, csrfToken, defaultColla
         onClick={() => setCollapsed((v) => !v)}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setCollapsed((v) => !v)}
+        onKeyDown={(e) =>
+          (e.key === "Enter" || e.key === " ") && setCollapsed((v) => !v)
+        }
       >
         <div
           className={cn(
@@ -62,9 +71,7 @@ export function RepoGroup({ kind, headline, body, repos, csrfToken, defaultColla
         </div>
 
         <div className="flex flex-1 flex-col pt-2">
-          <h2 className="display text-[22px] leading-tight text-fg">
-            {headline}
-          </h2>
+          <h2 className="display text-[22px] leading-tight text-fg">{headline}</h2>
           <p className="mt-1 text-[13px] text-fg-muted">{body}</p>
         </div>
 
@@ -77,10 +84,31 @@ export function RepoGroup({ kind, headline, body, repos, csrfToken, defaultColla
       </header>
 
       {!collapsed && (
-        <div className="divide-y divide-border-subtle border-t border-border-subtle">
-          {repos.map((repo) => (
-            <RepoCard key={repo.id} repo={repo} kind={kind} csrfToken={csrfToken} />
-          ))}
+        <div className="border-t border-border-subtle">
+          <div
+            className={cn(
+              "grid items-center gap-x-4 border-b border-border-subtle bg-bg/30 px-6 py-2 text-[10px] uppercase tracking-[0.12em] text-fg-dim",
+              ROW_GRID,
+            )}
+          >
+            <span>Repo · branch</span>
+            <span>Sync</span>
+            <span>Local</span>
+            <span>Last commit</span>
+            <span>PRs</span>
+            <span>Action</span>
+            <span />
+          </div>
+          <div className="divide-y divide-border-subtle">
+            {repos.map((repo) => (
+              <RepoCard
+                key={repo.id}
+                repo={repo}
+                kind={kind}
+                csrfToken={csrfToken}
+              />
+            ))}
+          </div>
         </div>
       )}
     </section>

@@ -11,7 +11,9 @@ export type ActionName =
   | "merge"
   | "stash-push"
   | "stash-pop"
-  | "open-editor";
+  | "open-editor"
+  | "open-terminal"
+  | "commit-push";
 
 export interface ActionRun {
   id: string;
@@ -37,6 +39,7 @@ interface StartOptions {
   repoPath: string;
   action: ActionName;
   branch: string | null;
+  commitMessage?: string;
 }
 
 export function startAction(opts: StartOptions): ActionRun {
@@ -56,11 +59,40 @@ export function startAction(opts: StartOptions): ActionRun {
   };
   runs.set(runId, run);
 
-  const args = buildArgs(opts.action, opts.branch);
-  const executable = opts.action === "open-editor" ? getEditor() : "git";
-  const spawnArgs = opts.action === "open-editor" ? [opts.repoPath] : ["-C", opts.repoPath, ...args];
+  if (opts.action === "commit-push") {
+    const message = sanitizeCommitMessage(opts.commitMessage);
+    setImmediate(() => {
+      executeCommitPush(run, opts.repoPath, message).catch((err) => {
+        run.emitter.emit("done", { exitCode: -1 });
+        run.exitCode = -1;
+        run.finishedAt = Date.now();
+        recordRunFinish(run);
+        // surface error
+        run.lines.push(`[fatal] ${(err as Error).message}`);
+      });
+    });
+    getDb().prepare(
+      "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
+    ).run(opts.repoId, opts.action, run.startedAt);
+    return run;
+  }
 
-  setImmediate(() => executeRun(run, executable, spawnArgs));
+  const args = buildArgs(opts.action, opts.branch);
+  let executable: string;
+  let spawnArgs: string[];
+  if (opts.action === "open-editor") {
+    executable = getEditor();
+    spawnArgs = [opts.repoPath];
+  } else if (opts.action === "open-terminal") {
+    executable = getTerminal();
+    spawnArgs = [];
+  } else {
+    executable = "git";
+    spawnArgs = ["-C", opts.repoPath, ...args];
+  }
+
+  const cwd = opts.action === "open-terminal" ? opts.repoPath : undefined;
+  setImmediate(() => executeRun(run, executable, spawnArgs, cwd));
 
   getDb().prepare(
     "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
@@ -87,14 +119,112 @@ function buildArgs(action: ActionName, branch: string | null): string[] {
       return ["stash", "pop"];
     case "open-editor":
       return [];
+    case "open-terminal":
+      return [];
+    case "commit-push":
+      return [];
   }
 }
 
-function getEditor(): string {
-  return process.env.GITDASH_EDITOR || process.env.VISUAL || process.env.EDITOR || "code";
+function sanitizeCommitMessage(input: string | undefined): string {
+  const raw = (input ?? "").trim();
+  if (!raw) return `Update from ${process.env.HOSTNAME ?? "gitdash"}`;
+  // Collapse bare CRs to LFs; cap length to keep the buffer safe.
+  return raw.replace(/\r\n?/g, "\n").slice(0, 5000);
 }
 
-function executeRun(run: ActionRun, executable: string, args: string[]): void {
+function recordRunFinish(run: ActionRun): void {
+  const truncated = run.lines.slice(-200).join("\n");
+  try {
+    getDb().prepare(
+      "UPDATE actions_log SET finished_at = ?, exit_code = ?, truncated_output = ? WHERE repo_id = ? AND started_at = ?",
+    ).run(run.finishedAt ?? Date.now(), run.exitCode ?? -1, truncated, run.repoId, run.startedAt);
+  } catch {
+    // best-effort
+  }
+}
+
+async function executeCommitPush(run: ActionRun, repoPath: string, message: string): Promise<void> {
+  const emit = (text: string) => {
+    run.lines.push(text);
+    run.emitter.emit("line", text);
+  };
+
+  const steps: { label: string; args: string[] }[] = [
+    { label: "stage", args: ["add", "-A"] },
+    { label: "commit", args: ["commit", "-m", message] },
+    { label: "push", args: ["push"] },
+  ];
+
+  for (const step of steps) {
+    emit(`$ git ${step.args.join(" ")}`);
+    const code = await new Promise<number>((resolve) => {
+      const child = spawn("git", ["-C", repoPath, ...step.args], {
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_ASKPASS: "/bin/echo",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      run.child = child;
+      const onData = (chunk: Buffer) => {
+        for (const line of chunk.toString("utf8").split(/\r?\n/)) {
+          if (line.length > 0) emit(line);
+        }
+      };
+      child.stdout?.on("data", onData);
+      child.stderr?.on("data", onData);
+      const timer = setTimeout(() => {
+        emit("[timeout] SIGTERM");
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), 3_000);
+      }, 120_000);
+      child.on("close", (c) => {
+        clearTimeout(timer);
+        resolve(c ?? -1);
+      });
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        emit(`[error] ${err.message}`);
+        resolve(-1);
+      });
+    });
+
+    if (code !== 0) {
+      if (step.label === "commit" && code === 1) {
+        // "nothing to commit" — treat as success, skip push
+        emit("[gitdash] nothing to commit; skipping push");
+        run.finishedAt = Date.now();
+        run.exitCode = 0;
+        recordRunFinish(run);
+        run.emitter.emit("done", { exitCode: 0 });
+        return;
+      }
+      emit(`[gitdash] step '${step.label}' failed (exit ${code}); aborting`);
+      run.finishedAt = Date.now();
+      run.exitCode = code;
+      recordRunFinish(run);
+      run.emitter.emit("done", { exitCode: code });
+      return;
+    }
+  }
+
+  run.finishedAt = Date.now();
+  run.exitCode = 0;
+  recordRunFinish(run);
+  run.emitter.emit("done", { exitCode: 0 });
+}
+
+function getEditor(): string {
+  return process.env.GITDASH_EDITOR || "code";
+}
+
+function getTerminal(): string {
+  return process.env.GITDASH_TERMINAL || "x-terminal-emulator";
+}
+
+function executeRun(run: ActionRun, executable: string, args: string[], cwd?: string): void {
   const emit = (text: string) => {
     run.lines.push(text);
     run.emitter.emit("line", text);
@@ -102,14 +232,25 @@ function executeRun(run: ActionRun, executable: string, args: string[]): void {
 
   emit(`$ ${executable} ${args.join(" ")}`);
 
+  const isLaunch = run.action === "open-editor" || run.action === "open-terminal";
   const child = spawn(executable, args, {
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
       GIT_ASKPASS: "/bin/echo",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: isLaunch ? "ignore" : ["ignore", "pipe", "pipe"],
+    cwd,
+    detached: isLaunch,
   });
+  if (isLaunch) {
+    child.unref();
+    emit(`launched ${executable} (detached) — gitdash is not tracking it`);
+    run.finishedAt = Date.now();
+    run.exitCode = 0;
+    setImmediate(() => run.emitter.emit("done", { exitCode: 0 }));
+    return;
+  }
   run.child = child;
 
   const onData = (chunk: Buffer) => {
@@ -121,7 +262,7 @@ function executeRun(run: ActionRun, executable: string, args: string[]): void {
   child.stdout?.on("data", onData);
   child.stderr?.on("data", onData);
 
-  const timeout = run.action === "open-editor" ? 5_000 : 120_000;
+  const timeout = (run.action === "open-editor" || run.action === "open-terminal") ? 5_000 : 120_000;
   const timer = setTimeout(() => {
     if (run.finishedAt) return;
     emit("[timeout] SIGTERM");
@@ -157,6 +298,8 @@ const VALID_ACTIONS: ReadonlySet<string> = new Set([
   "stash-push",
   "stash-pop",
   "open-editor",
+  "open-terminal",
+  "commit-push",
 ]);
 
 export function isValidAction(value: string): value is ActionName {

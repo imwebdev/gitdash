@@ -130,7 +130,7 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
   );
 
   return (
-    <main className="grain relative mx-auto max-w-[1080px] px-6 py-10 sm:px-10 sm:py-14">
+    <main className="grain relative mx-auto max-w-[1280px] px-6 py-10 sm:px-10 sm:py-14">
       <header className="mb-12 flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="display text-[44px] leading-none tracking-display-tight text-fg">

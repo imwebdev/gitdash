@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RepoView } from "@/lib/state/store";
-import { X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -25,20 +25,63 @@ const COPY: Record<string, { verb: string; confirm?: string }> = {
     confirm:
       "This will combine GitHub's new commits with yours, creating a merge commit. Conflicts (if any) will be left in your working tree for you to resolve.",
   },
+  "commit-push": { verb: "Committing and pushing to GitHub" },
   "open-editor": { verb: "Opening in your editor" },
+  "open-terminal": { verb: "Opening a terminal" },
 };
+
+interface ChangeEntry {
+  path: string;
+  status: string;
+  sizeBytes: number;
+  reason: "secret" | "large" | null;
+}
+
+interface ChangesResponse {
+  files: ChangeEntry[];
+  total: number;
+  suspicious: ChangeEntry[];
+  truncated: boolean;
+}
 
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const snap = repo.snapshot;
   const pushCount = snap?.remoteAhead ?? snap?.ahead ?? 0;
+  const isCommitPush = action === "commit-push";
   const needsConfirm =
-    action === "merge" || (action === "push" && pushCount > DESTRUCTIVE_CONFIRMATION_LIMIT);
+    isCommitPush ||
+    action === "merge" ||
+    (action === "push" && pushCount > DESTRUCTIVE_CONFIRMATION_LIMIT);
 
   const [phase, setPhase] = useState<Phase>(needsConfirm ? "confirm" : "running");
   const [log, setLog] = useState<string[]>([]);
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const [commitMessage, setCommitMessage] = useState<string>("");
+  const [changes, setChanges] = useState<ChangesResponse | null>(null);
+  const [changesLoading, setChangesLoading] = useState(isCommitPush);
   const logRef = useRef<HTMLPreElement | null>(null);
   const esRef = useRef<EventSource | null>(null);
+
+  // Fetch changes preview when entering commit-push confirm
+  useEffect(() => {
+    if (!isCommitPush || phase !== "confirm") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/repos/${repo.id}/changes`);
+        if (res.ok && !cancelled) {
+          setChanges((await res.json()) as ChangesResponse);
+        }
+      } catch {
+        // best-effort; user can still commit blind
+      } finally {
+        if (!cancelled) setChangesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCommitPush, phase, repo.id]);
 
   useEffect(() => {
     if (phase !== "running") return;
@@ -46,10 +89,11 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
 
     async function run() {
       try {
+        const body = isCommitPush ? { commitMessage: commitMessage.trim() } : {};
         const res = await fetch(`/api/repos/${repo.id}/actions/${action}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-          body: JSON.stringify({}),
+          body: JSON.stringify(body),
         });
         if (!res.ok) {
           const text = await res.text();
@@ -90,7 +134,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
       cancelled = true;
       esRef.current?.close();
     };
-  }, [phase, action, repo.id, csrfToken]);
+  }, [phase, action, repo.id, csrfToken, isCommitPush, commitMessage]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -106,7 +150,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="flex max-h-[min(80vh,720px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated shadow-2xl"
+        className="flex max-h-[min(85vh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-start justify-between gap-3 border-b border-border-subtle px-6 py-5">
@@ -126,7 +170,18 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           </button>
         </header>
 
-        {phase === "confirm" && (
+        {phase === "confirm" && isCommitPush && (
+          <CommitPushConfirm
+            changes={changes}
+            loading={changesLoading}
+            commitMessage={commitMessage}
+            onMessageChange={setCommitMessage}
+            onCancel={onClose}
+            onConfirm={() => setPhase("running")}
+          />
+        )}
+
+        {phase === "confirm" && !isCommitPush && (
           <div className="flex flex-col gap-4 px-6 py-6">
             <p className="text-[14px] leading-relaxed text-fg-muted">
               {action === "merge"
@@ -187,4 +242,138 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
       </div>
     </div>
   );
+}
+
+function CommitPushConfirm({
+  changes,
+  loading,
+  commitMessage,
+  onMessageChange,
+  onCancel,
+  onConfirm,
+}: {
+  changes: ChangesResponse | null;
+  loading: boolean;
+  commitMessage: string;
+  onMessageChange: (v: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const total = changes?.total ?? 0;
+  const suspicious = changes?.suspicious ?? [];
+
+  return (
+    <div className="flex flex-col gap-5 overflow-y-auto px-6 py-6">
+      {loading && (
+        <p className="text-[13px] text-fg-dim">Looking at what changed…</p>
+      )}
+
+      {!loading && changes && total === 0 && (
+        <p className="text-[13px] text-fg-muted">
+          No changes detected. Nothing to commit.
+        </p>
+      )}
+
+      {!loading && changes && total > 0 && (
+        <>
+          <div>
+            <p className="text-[14px] text-fg">
+              <span className="display-italic text-fg">{total}</span>{" "}
+              file{total === 1 ? "" : "s"} will be committed and pushed to GitHub.
+            </p>
+            {changes.truncated && (
+              <p className="mt-1 text-[11px] text-fg-dim">(showing first 500 — repo has more)</p>
+            )}
+            <FilePreview files={changes.files.slice(0, 8)} />
+            {changes.files.length > 8 && (
+              <p className="mt-2 text-[11px] text-fg-dim">…and {changes.files.length - 8} more</p>
+            )}
+          </div>
+
+          {suspicious.length > 0 && (
+            <div className="flex gap-3 rounded-lg border border-accent-attention/40 bg-accent-attention/8 p-4">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-accent-attention" />
+              <div className="text-[12.5px] text-fg-muted">
+                <p className="font-medium text-fg">
+                  Heads up — gitdash flagged {suspicious.length} file{suspicious.length === 1 ? "" : "s"}:
+                </p>
+                <ul className="mt-1.5 space-y-0.5 mono text-[11.5px]">
+                  {suspicious.slice(0, 6).map((f) => (
+                    <li key={f.path} className="text-accent-attention">
+                      {f.path}
+                      <span className="ml-2 text-fg-dim">
+                        ({f.reason === "secret" ? "looks like a secret" : "large file"})
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-[11.5px] text-fg-dim">
+                  These will be pushed to GitHub publicly if your repo is public. Make sure that's what you want.
+                </p>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <label className="flex flex-col gap-2">
+        <span className="text-[12px] uppercase tracking-wider text-fg-dim">Commit message</span>
+        <input
+          type="text"
+          value={commitMessage}
+          onChange={(e) => onMessageChange(e.target.value)}
+          placeholder="Update from this computer"
+          maxLength={300}
+          className="rounded-lg border border-border bg-bg/60 px-3.5 py-2 text-[13.5px] text-fg placeholder:text-fg-dim focus:border-ring focus:outline-none"
+        />
+        <span className="text-[11px] text-fg-dim">
+          Leave blank to use the default. This is what shows up in your GitHub commit history.
+        </span>
+      </label>
+
+      <div className="mt-1 flex justify-end gap-3">
+        <button
+          onClick={onCancel}
+          className="rounded-full border border-border px-4 py-1.5 text-[13px] font-medium text-fg-muted hover:border-fg-muted hover:text-fg"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={!loading && total === 0}
+          className={cn(
+            "rounded-full border px-5 py-1.5 text-[13px] font-medium transition-all",
+            "border-accent-push/45 bg-accent-push/15 text-accent-push hover:bg-accent-push/25",
+            "disabled:cursor-not-allowed disabled:opacity-40",
+          )}
+        >
+          Commit &amp; push
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FilePreview({ files }: { files: ChangeEntry[] }) {
+  if (files.length === 0) return null;
+  return (
+    <ul className="mt-3 mono space-y-0.5 text-[11.5px]">
+      {files.map((f) => (
+        <li key={f.path} className={cn("truncate", f.reason ? "text-accent-attention" : "text-fg-muted")}>
+          <span className="text-fg-dim">{statusGlyph(f.status)}</span> {f.path}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function statusGlyph(status: string): string {
+  // git porcelain XY — show the more interesting side
+  const s = status.trim();
+  if (s.startsWith("??")) return "+";       // untracked
+  if (s.includes("A")) return "+";          // added
+  if (s.includes("D")) return "−";          // deleted
+  if (s.includes("R")) return "→";          // renamed
+  if (s.includes("M")) return "~";          // modified
+  return "·";
 }
