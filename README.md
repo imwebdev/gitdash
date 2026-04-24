@@ -4,13 +4,28 @@
 
 **Built for Claude Code users who hop between machines** and want to know, at a glance, what's out of sync with GitHub.
 
-> 🐧 Linux only right now. macOS + Windows on the way ([#21](https://github.com/imwebdev/gitdash/issues/21)).
-
 ---
 
 ## ⚡ Install in 30 seconds
 
-Copy and paste this:
+### ✅ What works today
+
+Pick the row that matches you:
+
+| Your setup | Supported? | What to do |
+|---|---|---|
+| 🐧 **Linux** (Ubuntu, Debian, Fedora, Arch, etc.) | ✅ Yes | Follow the **Linux** steps below |
+| 🪟 **Windows 10 / 11 with WSL 2** (Ubuntu inside Windows) | ✅ Yes | Open your WSL terminal, then follow the **Linux** steps below |
+| 🪟 **Windows without WSL** (PowerShell, CMD, Git Bash) | ❌ Not yet | Install WSL 2 first — see [Windows note](#-windows-note) below. Native Windows support tracked in [#21](https://github.com/imwebdev/gitdash/issues/21) |
+| 🍎 **macOS** | ❌ Not yet | Tracked in [#21](https://github.com/imwebdev/gitdash/issues/21) |
+
+> ⚠️ **If you're on Windows PowerShell and pasted the command below**, you got an error like `The token '&&' is not a valid statement separator`. That's expected — `install.sh` is a bash script and will not run in PowerShell. Use WSL.
+
+---
+
+### 🐧 Linux (and Windows with WSL)
+
+In a **bash** or **zsh** terminal (on the Linux machine itself, or inside your WSL Ubuntu session), copy and paste this:
 
 ```bash
 git clone https://github.com/imwebdev/gitdash.git && cd gitdash && ./install.sh
@@ -19,6 +34,17 @@ git clone https://github.com/imwebdev/gitdash.git && cd gitdash && ./install.sh
 That's it. The installer prints a URL when it's done — open it in your browser.
 
 > ❓ **Don't have `git`, `node 20+`, or `gh` installed yet?** Skip down to [Prereqs](#-prereqs).
+
+---
+
+### 🪟 Windows note
+
+gitdash has **no native Windows installer yet**. You have two choices:
+
+1. **Install WSL 2** (recommended, 5 minutes): open PowerShell **as Administrator** and run `wsl --install`, reboot when it finishes, set up an Ubuntu username/password when prompted. Then type `wsl` in a new PowerShell window (or launch "Ubuntu" from Start) — you're now in a Linux shell, and the **Linux** steps above work.
+2. **Wait for native support** — track [#21](https://github.com/imwebdev/gitdash/issues/21).
+
+Do **not** try to run `install.sh` from PowerShell, CMD, or plain Git Bash — it uses `systemd` (Linux-only) to keep itself running after you close the terminal.
 
 ---
 
