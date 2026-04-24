@@ -121,6 +121,7 @@ export function upsertSnapshot(
   remote: RemoteComparison | null,
   weirdFlags: string[],
   now: number,
+  openPrCount: number | null = null,
 ): void {
   getDb().prepare(
     `INSERT INTO snapshots (
@@ -157,7 +158,7 @@ export function upsertSnapshot(
       remote_behind = COALESCE(excluded.remote_behind, remote_behind),
       remote_state = COALESCE(excluded.remote_state, remote_state),
       remote_sha = COALESCE(excluded.remote_sha, remote_sha),
-      open_pr_count = excluded.open_pr_count,
+      open_pr_count = COALESCE(excluded.open_pr_count, open_pr_count),
       weird_flags = excluded.weird_flags,
       collected_at = excluded.collected_at,
       remote_checked_at = COALESCE(excluded.remote_checked_at, remote_checked_at)`,
@@ -183,7 +184,7 @@ export function upsertSnapshot(
     remote_behind: remote?.behind ?? null,
     remote_state: remote?.state ?? null,
     remote_sha: remote?.remoteSha ?? null,
-    open_pr_count: 0,
+    open_pr_count: openPrCount,
     weird_flags: JSON.stringify(weirdFlags),
     collected_at: now,
     remote_checked_at: remote ? now : null,

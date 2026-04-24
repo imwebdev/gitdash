@@ -196,7 +196,7 @@ function comparisonFromBody(
   return { state, ahead, behind, remoteSha, localSha, checkedAt: now };
 }
 
-export async function fetchOpenPrCount(slug: GitHubSlug): Promise<number> {
+export async function fetchOpenPrCount(slug: GitHubSlug): Promise<number | null> {
   try {
     const res = await runGh([
       "api",
@@ -207,6 +207,6 @@ export async function fetchOpenPrCount(slug: GitHubSlug): Promise<number> {
     const parsed = JSON.parse(res.stdout) as { total_count?: number };
     return parsed.total_count ?? 0;
   } catch {
-    return 0;
+    return null;
   }
 }
