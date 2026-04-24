@@ -11,10 +11,11 @@ import {
   ChevronDown,
   ExternalLink,
   GitPullRequest,
+  Lock,
   RefreshCw,
 } from "lucide-react";
 
-export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "clean";
+export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "clean" | "read-only";
 
 export const ROW_GRID =
   "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_104px]";
@@ -24,6 +25,9 @@ function primaryAction(
   hasRemote: boolean,
   hasConflicts: boolean,
 ): { label: string; action: string | null } {
+  // Read-only intentionally has no primary action — the only thing the user
+  // could do from gitdash is pull/fetch, which lives in the ⋯ menu.
+  if (kind === "read-only") return { label: "", action: null };
   if (kind === "push") return { label: "Push", action: "push" };
   if (kind === "pull") return { label: "Pull", action: "pull" };
   if (kind === "diverged") return { label: "Merge", action: "merge" };
@@ -31,6 +35,18 @@ function primaryAction(
     return { label: "Commit & push", action: "commit-push" };
   }
   return { label: "", action: null };
+}
+
+function ReadOnlyBadge() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-fg-dim/25 bg-fg-dim/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-fg-dim"
+      title="You don't have push access to this repo"
+    >
+      <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+      read-only
+    </span>
+  );
 }
 
 function relativeTime(unix: number | null | undefined): string {
@@ -126,9 +142,12 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
           )}
         >
           <div className="flex min-w-0 flex-col">
-            <h3 className="truncate text-[14px] font-medium tracking-tight text-fg">
-              {repo.displayName}
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-[14px] font-medium tracking-tight text-fg">
+                {repo.displayName}
+              </h3>
+              {kind === "read-only" && <ReadOnlyBadge />}
+            </div>
             <span className="mono truncate text-[11px] text-fg-dim">
               {snap?.detached ? "(detached HEAD)" : snap?.branch ?? "—"}
             </span>
@@ -168,9 +187,12 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
         <div className="flex flex-col gap-3 px-4 py-3.5 sm:hidden">
           <div className="flex items-start gap-3">
             <div className="flex min-w-0 flex-1 flex-col">
-              <h3 className="truncate text-[15px] font-medium tracking-tight text-fg">
-                {repo.displayName}
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="truncate text-[15px] font-medium tracking-tight text-fg">
+                  {repo.displayName}
+                </h3>
+                {kind === "read-only" && <ReadOnlyBadge />}
+              </div>
               <span className="mono truncate text-[11px] text-fg-dim">
                 {snap?.detached ? "(detached HEAD)" : snap?.branch ?? "—"}
               </span>

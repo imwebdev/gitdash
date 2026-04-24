@@ -20,6 +20,17 @@ export function getDb(): Database.Database {
   return db;
 }
 
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (info.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 function migrate(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS repos (
@@ -59,6 +70,7 @@ function migrate(db: Database.Database): void {
       remote_state       TEXT,
       remote_sha         TEXT,
       open_pr_count      INTEGER NOT NULL DEFAULT 0,
+      can_push           INTEGER,
       weird_flags        TEXT NOT NULL DEFAULT '[]',
       collected_at       INTEGER NOT NULL,
       remote_checked_at  INTEGER
@@ -82,6 +94,10 @@ function migrate(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_actions_repo ON actions_log(repo_id, started_at DESC);
   `);
+
+  // Idempotent additive migrations for columns added after initial ship.
+  // NULL means unknown (non-GitHub remote, not yet checked, or API failure).
+  addColumnIfMissing(db, "snapshots", "can_push", "INTEGER");
 }
 
 export function closeDb(): void {

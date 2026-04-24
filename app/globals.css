@@ -32,6 +32,7 @@
     --attention: 17 79% 33%;            /* #9A3412 orange-800 */
     --dirty: 26 84% 31%;                /* #92400E amber-800 */
     --clean: 162 88% 20%;               /* #065F46 emerald-800 — Purity green */
+    --readonly: 215 19% 35%;            /* #4A5568 slate-700 — neutral for no-push */
 
     /* Tint alphas */
     --tint-alpha: 0.06;
@@ -54,6 +55,7 @@
     --attention: 28 96% 73%;            /* #FDBA74 orange-300 */
     --dirty: 46 97% 65%;                /* #FCD34D amber-300 */
     --clean: 156 72% 67%;               /* #6EE7B7 emerald-300 */
+    --readonly: 215 25% 70%;            /* #A3B0C2 slate-300-ish */
 
     --tint-alpha: 0.10;
   }
@@ -108,4 +110,5 @@
   .tint-attention { background-color: hsl(var(--attention) / var(--tint-alpha)); }
   .tint-dirty     { background-color: hsl(var(--dirty) / var(--tint-alpha)); }
   .tint-clean     { background-color: hsl(var(--clean) / var(--tint-alpha)); }
+  .tint-readonly  { background-color: hsl(var(--readonly) / var(--tint-alpha)); }
 }

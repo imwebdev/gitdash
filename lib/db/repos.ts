@@ -51,6 +51,7 @@ export interface SnapshotRow {
   remoteState: string | null;
   remoteSha: string | null;
   openPrCount: number;
+  canPush: boolean | null;
   weirdFlags: string[];
   collectedAt: number;
   remoteCheckedAt: number | null;
@@ -121,6 +122,7 @@ export function upsertSnapshot(
   remote: RemoteComparison | null,
   weirdFlags: string[],
   now: number,
+  canPush: boolean | null = null,
 ): void {
   getDb().prepare(
     `INSERT INTO snapshots (
@@ -128,13 +130,13 @@ export function upsertSnapshot(
       ahead, behind, dirty_tracked, staged, staged_deletions,
       untracked, conflicted, detached, last_commit_sha, last_commit_ts,
       last_commit_subject, remote_url, remote_ahead, remote_behind,
-      remote_state, remote_sha, open_pr_count, weird_flags, collected_at, remote_checked_at
+      remote_state, remote_sha, open_pr_count, can_push, weird_flags, collected_at, remote_checked_at
     ) VALUES (
       @repo_id, @branch, @upstream, @head_sha, @upstream_sha,
       @ahead, @behind, @dirty_tracked, @staged, @staged_deletions,
       @untracked, @conflicted, @detached, @last_commit_sha, @last_commit_ts,
       @last_commit_subject, @remote_url, @remote_ahead, @remote_behind,
-      @remote_state, @remote_sha, @open_pr_count, @weird_flags, @collected_at, @remote_checked_at
+      @remote_state, @remote_sha, @open_pr_count, @can_push, @weird_flags, @collected_at, @remote_checked_at
     )
     ON CONFLICT(repo_id) DO UPDATE SET
       branch = excluded.branch,
@@ -158,6 +160,7 @@ export function upsertSnapshot(
       remote_state = COALESCE(excluded.remote_state, remote_state),
       remote_sha = COALESCE(excluded.remote_sha, remote_sha),
       open_pr_count = excluded.open_pr_count,
+      can_push = COALESCE(excluded.can_push, can_push),
       weird_flags = excluded.weird_flags,
       collected_at = excluded.collected_at,
       remote_checked_at = COALESCE(excluded.remote_checked_at, remote_checked_at)`,
@@ -184,6 +187,7 @@ export function upsertSnapshot(
     remote_state: remote?.state ?? null,
     remote_sha: remote?.remoteSha ?? null,
     open_pr_count: 0,
+    can_push: canPush === null ? null : canPush ? 1 : 0,
     weird_flags: JSON.stringify(weirdFlags),
     collected_at: now,
     remote_checked_at: remote ? now : null,
@@ -213,6 +217,7 @@ interface SnapshotRaw {
   remote_state: string | null;
   remote_sha: string | null;
   open_pr_count: number;
+  can_push: number | null;
   weird_flags: string;
   collected_at: number;
   remote_checked_at: number | null;
@@ -303,6 +308,7 @@ function rawToSnapshot(r: SnapshotRaw): SnapshotRow {
     remoteState: r.remote_state,
     remoteSha: r.remote_sha,
     openPrCount: r.open_pr_count,
+    canPush: r.can_push === null ? null : r.can_push === 1,
     weirdFlags,
     collectedAt: r.collected_at,
     remoteCheckedAt: r.remote_checked_at,

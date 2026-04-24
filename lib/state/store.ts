@@ -19,16 +19,23 @@ export type DerivedState =
   | "diverged"
   | "dirty"
   | "no-upstream"
+  | "read-only"
   | "weird"
   | "unknown";
 
 export function deriveState(row: RepoRow, snap: SnapshotRow | null): DerivedState {
   if (!snap) return "unknown";
+  // Mid-flight git state (merge/rebase) outranks read-only — the user needs to
+  // resolve it locally either way, and hiding it inside the read-only bucket
+  // would be confusing.
   if (snap.weirdFlags.length > 0) return "weird";
   if (snap.detached) return "weird";
   if (snap.stagedDeletions > 500) return "weird";
   const dirty = snap.dirtyTracked + snap.staged + snap.untracked + snap.conflicted;
   if (dirty > 1000) return "weird";
+  // Read-only trumps actionable remote states: if the user can't push, showing
+  // this repo in "wants to be pushed" is a lie.
+  if (snap.canPush === false) return "read-only";
   if (dirty > 0) return "dirty";
   if (snap.remoteState === "diverged") return "diverged";
   if (snap.remoteState === "ahead" || snap.ahead > 0) return "ahead";

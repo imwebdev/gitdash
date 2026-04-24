@@ -24,6 +24,7 @@ const TINT: Record<GroupKind, string> = {
   attention: "tint-attention",
   dirty: "tint-dirty",
   clean: "tint-clean",
+  "read-only": "tint-readonly",
 };
 
 const ACCENT: Record<GroupKind, string> = {
@@ -33,6 +34,7 @@ const ACCENT: Record<GroupKind, string> = {
   attention: "text-accent-attention",
   dirty: "text-accent-dirty",
   clean: "text-accent-clean",
+  "read-only": "text-fg-dim",
 };
 
 const EMPTY_COPY: Partial<Record<GroupKind, string>> = {

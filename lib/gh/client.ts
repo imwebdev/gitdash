@@ -210,3 +210,27 @@ export async function fetchOpenPrCount(slug: GitHubSlug): Promise<number> {
     return 0;
   }
 }
+
+/**
+ * Check whether the authenticated user has push access to this repo.
+ * Returns null on auth/network error so callers can preserve the last
+ * known value via COALESCE instead of clobbering with "false".
+ */
+export async function fetchCanPush(slug: GitHubSlug): Promise<boolean | null> {
+  try {
+    const res = await runGh([
+      "api",
+      "--method",
+      "GET",
+      `repos/${slug.owner}/${slug.name}`,
+      "--jq",
+      ".permissions.push",
+    ]);
+    const out = res.stdout.trim();
+    if (out === "true") return true;
+    if (out === "false") return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
