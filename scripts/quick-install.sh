@@ -367,24 +367,44 @@ setup_systemd_service() {
 
   mkdir -p "$config_dir" "$systemd_dir"
 
-  # Env file: keep existing (to preserve CSRF token) or create fresh
+  # Capture the node that built the native modules (e.g. better-sqlite3).
+  # systemd --user starts with a minimal PATH (/usr/bin:/bin) and would
+  # otherwise pick up an unrelated system node — mismatched NODE_MODULE_VERSION
+  # then breaks the native .node binaries at runtime (ERR_DLOPEN_FAILED).
+  local node_dir
+  node_dir="$(dirname "$(command -v node 2>/dev/null || echo /usr/bin/node)")"
+  local service_path="$node_dir:/usr/local/bin:/usr/bin:/bin"
+
+  # Env file: keep existing (to preserve CSRF token) but always refresh PATH
+  # because the user's node location may have changed since last install.
+  local csrf_line
   if [ -f "$env_file" ]; then
-    ok "existing env at $env_file — keeping"
+    ok "existing env at $env_file — keeping CSRF token, refreshing PATH"
+    # Extract the existing CSRF token so we can rewrite the file cleanly
+    csrf_line="$(grep -E '^GITDASH_CSRF_TOKEN=' "$env_file" || echo "")"
+    if [ -z "$csrf_line" ]; then
+      csrf_line="GITDASH_CSRF_TOKEN=$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')"
+    fi
   else
-    local csrf_token
-    csrf_token="$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')"
-    cat > "$env_file" <<EOF
+    csrf_line="GITDASH_CSRF_TOKEN=$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')"
+  fi
+
+  cat > "$env_file" <<EOF
 # gitdash environment — sourced by the systemd service.
 # Edit values below to override defaults. Restart after changes:
 #   systemctl --user restart gitdash
 
-GITDASH_CSRF_TOKEN=$csrf_token
+$csrf_line
 GITDASH_PORT=${GITDASH_PORT:-7420}
 GITDASH_BIND=${GITDASH_BIND:-0.0.0.0}
+
+# Pin the node used at install time — prevents better-sqlite3 /
+# NODE_MODULE_VERSION mismatch when systemd's minimal PATH would
+# otherwise pick up an older apt-installed node.
+PATH=$service_path
 EOF
-    chmod 600 "$env_file"
-    ok "wrote $env_file (mode 600)"
-  fi
+  chmod 600 "$env_file"
+  ok "wrote $env_file (mode 600; PATH pinned to $node_dir)"
 
   # Render service file with absolute install path
   sed "s|{{REPO_DIR}}|$INSTALL_DIR|g" "$template" > "$service_file"
