@@ -9,7 +9,7 @@
 #   1. Verifies OS (linux/macos) and tools (node>=20, git, gh)
 #   2. Walks you through `gh auth login` if not signed in
 #   3. Runs `gh auth setup-git` so https pushes use your gh token
-#   4. Clones or updates gitdash under $XDG_DATA_HOME/gitdash
+#   4. Clones or updates gitdash into ~/gitdash (override with GITDASH_HOME=/path)
 #   5. Installs deps + builds
 #   6. Symlinks a `gitdash` launcher into ~/.local/bin
 #   7. On Linux with systemd: installs a systemd --user service so gitdash
@@ -30,7 +30,21 @@ set -euo pipefail
 
 REPO_URL_DEFAULT="https://github.com/imwebdev/gitdash.git"
 REPO_URL="${GITDASH_REPO:-$REPO_URL_DEFAULT}"
-INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gitdash"
+
+# Install location. Default is ~/gitdash (visible, so users can cd into it
+# and tools like Claude Code can see the tree). Override with GITDASH_HOME.
+# If a legacy XDG install (~/.local/share/gitdash) exists and the new default
+# does not, we reuse the legacy path so re-runs don't orphan existing data.
+DEFAULT_INSTALL_DIR="$HOME/gitdash"
+LEGACY_INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gitdash"
+if [ -n "${GITDASH_HOME:-}" ]; then
+  INSTALL_DIR="$GITDASH_HOME"
+elif [ -d "$LEGACY_INSTALL_DIR/.git" ] && [ ! -d "$DEFAULT_INSTALL_DIR/.git" ]; then
+  INSTALL_DIR="$LEGACY_INSTALL_DIR"
+else
+  INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+fi
+
 BIN_DIR="$HOME/.local/bin"
 BRANCH_DEFAULT="main"
 BRANCH="${GITDASH_BRANCH:-$BRANCH_DEFAULT}"
