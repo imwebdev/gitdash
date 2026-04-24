@@ -92,30 +92,61 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const url = `/api/stream?showSystem=${showSystem ? "1" : "0"}`;
-    const es = new EventSource(url);
-    es.addEventListener("snapshot", (ev) => {
-      setConnected(true);
-      const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
-      setRepos(data.repos);
-    });
-    es.addEventListener("bulk", (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
-      setRepos(data.repos);
-    });
-    es.addEventListener("update", async () => {
-      try {
-        const res = await fetch(`/api/repos?showSystem=${showSystem ? "1" : "0"}`);
-        if (res.ok) {
-          const data = (await res.json()) as { repos: RepoView[] };
-          setRepos(data.repos);
+    let es: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    let cancelled = false;
+
+    const connect = () => {
+      if (cancelled) return;
+      const url = `/api/stream?showSystem=${showSystem ? "1" : "0"}`;
+      const source = new EventSource(url);
+      es = source;
+
+      source.addEventListener("open", () => {
+        attempts = 0;
+        setConnected(true);
+      });
+      source.addEventListener("snapshot", (ev) => {
+        const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
+        setRepos(data.repos);
+      });
+      source.addEventListener("bulk", (ev) => {
+        const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
+        setRepos(data.repos);
+      });
+      source.addEventListener("update", async () => {
+        try {
+          const res = await fetch(`/api/repos?showSystem=${showSystem ? "1" : "0"}`);
+          if (res.ok) {
+            const data = (await res.json()) as { repos: RepoView[] };
+            setRepos(data.repos);
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
+      });
+      source.onerror = () => {
+        setConnected(false);
+        source.close();
+        if (es === source) es = null;
+        if (cancelled) return;
+        const delay = Math.min(30_000, 1_000 * Math.pow(2, attempts));
+        attempts += 1;
+        retryTimer = setTimeout(connect, delay);
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
       }
-    });
-    es.onerror = () => setConnected(false);
-    return () => es.close();
+      es?.close();
+    };
   }, [showSystem]);
 
   const filtered = useMemo(() => {
