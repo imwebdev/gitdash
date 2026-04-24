@@ -332,6 +332,24 @@ print_next_steps() {
   printf '  Re-install: re-run this command; it is idempotent.\n\n'
 }
 
+# Start gitdash in the foreground, replacing this shell with next-server so
+# the user sees the running server's output and URL directly. Ctrl-C stops it.
+# For always-on / systemd-managed installs, ./install.sh is still the path.
+start_gitdash() {
+  local launcher="$INSTALL_DIR/bin/gitdash"
+  if [ ! -x "$launcher" ]; then
+    warn "Launcher not found or not executable at $launcher — skipping auto-start"
+    return 0
+  fi
+
+  step "Starting gitdash"
+  printf '  %s(Ctrl-C to stop. For a persistent systemd install, use ./install.sh instead.)%s\n\n' \
+    "$C_DIM" "$C_RESET"
+
+  # Invoke the launcher at its real path to avoid any PATH / symlink ambiguity.
+  exec "$launcher" start
+}
+
 # ---- main ------------------------------------------------------------------
 main() {
   printf '%sgitdash quick-install%s\n' "$C_BOLD" "$C_RESET"
@@ -350,6 +368,15 @@ main() {
   build_gitdash
   install_launcher
   print_next_steps
+
+  # Auto-start unless explicitly opted out (CI, headless provisioning, etc.)
+  if [ "${GITDASH_NO_START:-0}" = "1" ]; then
+    printf '  %sGITDASH_NO_START=1 set — not auto-starting. Run %sgitdash start%s when ready.%s\n\n' \
+      "$C_DIM" "$C_BOLD" "$C_DIM" "$C_RESET"
+    return 0
+  fi
+
+  start_gitdash
 }
 
 main "$@"
