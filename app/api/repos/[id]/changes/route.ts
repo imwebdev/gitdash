@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { bootstrap } from "@/lib/bootstrap";
 import { getRepoById } from "@/lib/db/repos";
@@ -60,6 +60,8 @@ export async function GET(
   const entries: ChangeEntry[] = [];
   const chunks = stdout.split("\0").filter(Boolean);
   let truncated = false;
+  const repoRoot = path.resolve(repo.repoPath);
+  const repoRootPrefix = repoRoot.endsWith(path.sep) ? repoRoot : repoRoot + path.sep;
 
   for (const raw of chunks) {
     if (entries.length >= MAX_ENTRIES) {
@@ -74,12 +76,20 @@ export async function GET(
     const baseName = path.basename(filePath);
     const matchesSecret = SUSPICIOUS_NAME_PATTERNS.some((re) => re.test(baseName));
 
+    // Resolve and verify the path stays inside the repo root before stat'ing.
+    // Defends against symlink-farm or crafted repo state leaking file metadata
+    // from outside the repo. lstat (not stat) so symlinks report their own
+    // size instead of following to a target we don't want to touch.
     let sizeBytes = 0;
-    try {
-      const s = await stat(path.join(repo.repoPath, filePath));
-      sizeBytes = s.isFile() ? s.size : 0;
-    } catch {
-      sizeBytes = 0;
+    const absPath = path.resolve(repoRoot, filePath);
+    const insideRepo = absPath === repoRoot || absPath.startsWith(repoRootPrefix);
+    if (insideRepo) {
+      try {
+        const s = await lstat(absPath);
+        sizeBytes = s.isFile() ? s.size : 0;
+      } catch {
+        sizeBytes = 0;
+      }
     }
 
     let reason: ChangeEntry["reason"] = null;
