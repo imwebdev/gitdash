@@ -6,45 +6,90 @@
 
 ---
 
-## ⚡ Install in 30 seconds
+## ⚡ Install
 
-### ✅ What works today
+**Pick your operating system and follow only the steps in that section.**
 
-Pick the row that matches you:
-
-| Your setup | Supported? | What to do |
-|---|---|---|
-| 🐧 **Linux** (Ubuntu, Debian, Fedora, Arch, etc.) | ✅ Yes | Follow the **Linux** steps below |
-| 🪟 **Windows 10 / 11 with WSL 2** (Ubuntu inside Windows) | ✅ Yes | Open your WSL terminal, then follow the **Linux** steps below |
-| 🪟 **Windows without WSL** (PowerShell, CMD, Git Bash) | ❌ Not yet | Install WSL 2 first — see [Windows note](#-windows-note) below. Native Windows support tracked in [#21](https://github.com/imwebdev/gitdash/issues/21) |
-| 🍎 **macOS** | ❌ Not yet | Tracked in [#21](https://github.com/imwebdev/gitdash/issues/21) |
-
-> ⚠️ **If you're on Windows PowerShell and pasted the command below**, you got an error like `The token '&&' is not a valid statement separator`. That's expected — `install.sh` is a bash script and will not run in PowerShell. Use WSL.
+- [🐧 Linux — install](#-linux--install)
+- [🪟 Windows — install](#-windows--install)
+- [🍎 macOS — install](#-macos--install)
 
 ---
 
-### 🐧 Linux (and Windows with WSL)
+## 🐧 Linux — install
 
-In a **bash** or **zsh** terminal (on the Linux machine itself, or inside your WSL Ubuntu session), copy and paste this:
+Works on Ubuntu, Debian, Fedora, Arch, and most other mainstream distros.
+
+Open a normal terminal (bash or zsh) and paste **one** of these:
+
+**Quick install (recommended):**
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.sh)
+```
+
+**Or clone-then-install (if you want the source tree):**
 
 ```bash
 git clone https://github.com/imwebdev/gitdash.git && cd gitdash && ./install.sh
 ```
 
-That's it. The installer prints a URL when it's done — open it in your browser.
+The installer prints a URL when it's done — open it in your browser.
 
-> ❓ **Don't have `git`, `node 20+`, or `gh` installed yet?** Skip down to [Prereqs](#-prereqs).
+> ❓ Missing `git`, `node 20+`, or `gh`? See [Prereqs](#-prereqs).
 
 ---
 
-### 🪟 Windows note
+## 🪟 Windows — install
 
-gitdash has **no native Windows installer yet**. You have two choices:
+**Windows is not natively supported yet.** `install.sh` is a bash script and uses `systemd`, which Windows does not have. Progress tracked in [#21](https://github.com/imwebdev/gitdash/issues/21).
 
-1. **Install WSL 2** (recommended, 5 minutes): open PowerShell **as Administrator** and run `wsl --install`, reboot when it finishes, set up an Ubuntu username/password when prompted. Then type `wsl` in a new PowerShell window (or launch "Ubuntu" from Start) — you're now in a Linux shell, and the **Linux** steps above work.
-2. **Wait for native support** — track [#21](https://github.com/imwebdev/gitdash/issues/21).
+### ⚠️ Seeing `The token '&&' is not a valid statement separator` in PowerShell?
 
-Do **not** try to run `install.sh` from PowerShell, CMD, or plain Git Bash — it uses `systemd` (Linux-only) to keep itself running after you close the terminal.
+That's **expected** — PowerShell doesn't understand bash syntax. Do **not** keep trying the Linux command in PowerShell, CMD, or plain Git Bash. You need WSL (below).
+
+### How to install today — use WSL 2 (~5 minutes)
+
+WSL (Windows Subsystem for Linux) gives you a real Ubuntu shell inside Windows.
+
+**Step 1** — Open **PowerShell as Administrator** (right-click the Start button → "Terminal (Admin)" or "Windows PowerShell (Admin)") and run:
+
+```powershell
+wsl --install
+```
+
+**Step 2** — Reboot Windows when it asks.
+
+**Step 3** — After reboot, Ubuntu launches automatically and asks for a Linux username + password. Set them. (This is the user inside WSL, unrelated to your Windows login.)
+
+**Step 4** — You're now in a Linux shell (prompt looks like `user@hostname:~$`). Paste this:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.sh)
+```
+
+**Step 5** — When the installer finishes, it prints a URL like `http://127.0.0.1:7420`. Open that in any Windows browser (Edge, Chrome, Firefox) — WSL forwards the port automatically.
+
+To come back into WSL later: open a new PowerShell window and type `wsl`, or launch "Ubuntu" from the Start menu.
+
+---
+
+## 🍎 macOS — install
+
+**macOS is not natively supported yet.** Native launchd-based install is being tracked in [#21](https://github.com/imwebdev/gitdash/issues/21).
+
+### Workaround today — run gitdash on a Linux box, open it from your Mac
+
+gitdash runs as a web server, so it doesn't need to run on the same machine you view it from.
+
+1. On any Linux server you have SSH access to (cloud VM, home server, Raspberry Pi, etc.), run:
+   ```bash
+   bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.sh)
+   ```
+2. Note the LAN IP the installer prints (e.g. `http://192.168.1.50:7420`).
+3. On your Mac, open that URL in Safari / Chrome / etc.
+
+The installer binds to `0.0.0.0` by default, so it's reachable from any device on the same network.
 
 ---
 
