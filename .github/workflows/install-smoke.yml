@@ -1,6 +1,19 @@
 name: Install smoke test
 
 on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+      - 'fix/**'
+    paths:
+      - 'install.sh'
+      - 'uninstall.sh'
+      - 'scripts/**'
+      - 'bin/gitdash'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/install-smoke.yml'
   pull_request:
     paths:
       - 'install.sh'
