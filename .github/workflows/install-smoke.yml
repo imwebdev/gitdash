@@ -1,0 +1,82 @@
+name: Install smoke test
+
+on:
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'uninstall.sh'
+      - 'scripts/**'
+      - 'bin/gitdash'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/install-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: macOS (launchd)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Run installer
+        run: ./install.sh
+
+      - name: Wait for dashboard to respond
+        id: wait
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:7420/ -o /dev/null; then
+              echo "Dashboard responded after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Dashboard did not respond on :7420 within 60s"
+          exit 1
+
+      - name: Assert launchd task is registered
+        run: |
+          launchctl list com.gitdash
+          test -f "$HOME/Library/LaunchAgents/com.gitdash.plist"
+
+      - name: Dashboard returns HTML (smoke)
+        run: |
+          body=$(curl -sf http://127.0.0.1:7420/)
+          echo "$body" | grep -qi '<html' || {
+            echo "::error::Response on :7420 was not HTML"
+            echo "$body" | head -40
+            exit 1
+          }
+
+      - name: Uninstall
+        run: ./uninstall.sh --purge
+
+      - name: Assert clean removal
+        run: |
+          if launchctl list com.gitdash >/dev/null 2>&1; then
+            echo "::error::com.gitdash still registered after uninstall"
+            exit 1
+          fi
+          if [ -f "$HOME/Library/LaunchAgents/com.gitdash.plist" ]; then
+            echo "::error::plist not removed"
+            exit 1
+          fi
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "--- launchctl list (com.gitdash) ---"
+          launchctl list com.gitdash 2>&1 || true
+          echo "--- plist ---"
+          cat "$HOME/Library/LaunchAgents/com.gitdash.plist" 2>&1 || true
+          echo "--- gitdash.log ---"
+          tail -300 "$HOME/Library/Logs/gitdash.log" 2>&1 || true
+          echo "--- port listeners ---"
+          lsof -i :7420 2>&1 || true
