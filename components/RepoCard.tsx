@@ -224,7 +224,7 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
                 e.stopPropagation();
                 setModalAction(button.action);
               }}
-              className={cn(actionButtonClass(kind), "h-10 self-start px-4 text-[13px]")}
+              className={cn(actionButtonClass(kind), "h-11 self-start px-4 text-[13px] sm:h-10")}
             >
               {button.label}
             </button>
@@ -449,7 +449,7 @@ function RowIcons({
         aria-label="Refresh"
         disabled={refreshState === "spinning"}
         className={cn(
-          "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors sm:h-7 sm:w-7",
+          "inline-flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-7 sm:w-7",
           refreshState === "error"
             ? "text-accent-attention"
             : "text-fg-dim hover:bg-bg-hover hover:text-fg",
@@ -468,13 +468,13 @@ function RowIcons({
           onClick={(e) => e.stopPropagation()}
           title="Open on GitHub"
           aria-label="Open on GitHub"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg sm:h-7 sm:w-7"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg sm:h-7 sm:w-7"
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
       ) : (
         <span
-          className="inline-flex h-9 w-9 items-center justify-center text-fg-dim opacity-30 sm:h-7 sm:w-7"
+          className="inline-flex h-11 w-11 items-center justify-center text-fg-dim opacity-30 sm:h-7 sm:w-7"
           title="No GitHub remote"
         >
           <ExternalLink className="h-3.5 w-3.5" />
@@ -482,7 +482,7 @@ function RowIcons({
       )}
       <span
         aria-hidden="true"
-        className="inline-flex h-9 w-9 items-center justify-center text-fg-dim sm:h-7 sm:w-7"
+        className="inline-flex h-11 w-11 items-center justify-center text-fg-dim sm:h-7 sm:w-7"
       >
         <ChevronDown
           className={cn(
