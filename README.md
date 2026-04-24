@@ -20,7 +20,30 @@
 
 Works on Ubuntu, Debian, Fedora, Arch, and most other mainstream distros.
 
-Open a normal terminal (bash or zsh) and paste **one** of these:
+### 🛑 First — make sure you're actually at a Linux prompt
+
+The install command below only works when you are **inside a Linux shell**, not inside Windows PowerShell or CMD.
+
+Look at your prompt right now:
+
+| Your prompt looks like… | What it is | Paste the command here? |
+|---|---|---|
+| `chirag@ubuntu:~$` or `[root@server ~]#` | ✅ Linux shell | **Yes** |
+| `PS C:\Users\you>` | ❌ Windows PowerShell | **No** — see below |
+| `C:\Users\you>` | ❌ Windows CMD | **No** — see below |
+| `MINGW64 ~` or `MSYS …` | ❌ Git Bash for Windows | **No** — doesn't have `systemd` |
+
+**If you have a remote Linux box** (cloud VM, home server, etc.) and you SSH in from another machine:
+
+- **From Windows via PuTTY:** open PuTTY → enter host → click Open → **paste in the PuTTY window** (right-click pastes).
+- **From Windows via Terminal / PowerShell's built-in ssh:** run `ssh you@your-server-ip` first, confirm the prompt changes to `user@host:~$`, **then** paste.
+- **From macOS:** open Terminal → `ssh you@your-server-ip` → paste after the prompt changes.
+
+**If you don't have a Linux box** and just want to run gitdash on your own machine, go to the section for your OS:
+- Windows → [🪟 Windows — install](#-windows--install)
+- macOS → [🍎 macOS — install](#-macos--install)
+
+### Paste one of these at your Linux prompt
 
 **Quick install (recommended):**
 
