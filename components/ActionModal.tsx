@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RepoView } from "@/lib/state/store";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Ban, Lock, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -12,7 +12,13 @@ interface Props {
   onClose: () => void;
 }
 
-type Phase = "confirm" | "running" | "done" | "error";
+type Phase = "blocked" | "confirm" | "running" | "done" | "error";
+
+type BlockedReason =
+  | { kind: "no-push-access" }
+  | { kind: "oversized-files"; files: ChangeEntry[] };
+
+const PUSH_ACTIONS = new Set(["push", "commit-push", "merge"]);
 
 const DESTRUCTIVE_CONFIRMATION_LIMIT = 10;
 
@@ -34,7 +40,7 @@ interface ChangeEntry {
   path: string;
   status: string;
   sizeBytes: number;
-  reason: "secret" | "large" | null;
+  reason: "secret" | "large" | "oversized" | null;
 }
 
 interface ChangesResponse {
@@ -53,7 +59,19 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     action === "merge" ||
     (action === "push" && pushCount > DESTRUCTIVE_CONFIRMATION_LIMIT);
 
-  const [phase, setPhase] = useState<Phase>(needsConfirm ? "confirm" : "running");
+  // Preflight: block push-y actions outright when the user has no push access.
+  // canPush === false is confidently blocked; null means unknown (not yet
+  // checked, non-GitHub remote) so we let it proceed and learn from the remote.
+  const noPushAccess =
+    PUSH_ACTIONS.has(action) && snap?.canPush === false;
+
+  const [blocked, setBlocked] = useState<BlockedReason | null>(
+    noPushAccess ? { kind: "no-push-access" } : null,
+  );
+  const [phase, setPhase] = useState<Phase>(
+    noPushAccess ? "blocked" : needsConfirm ? "confirm" : "running",
+  );
+  const [errorSummary, setErrorSummary] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [commitMessage, setCommitMessage] = useState<string>("");
@@ -70,7 +88,16 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
       try {
         const res = await fetch(`/api/repos/${repo.id}/changes`);
         if (res.ok && !cancelled) {
-          setChanges((await res.json()) as ChangesResponse);
+          const data = (await res.json()) as ChangesResponse;
+          setChanges(data);
+          // Hard-block if any file exceeds GitHub's 100 MB size limit — the
+          // push would be rejected by pre-receive and leave the user with a
+          // local commit they have to undo.
+          const oversized = data.files.filter((f) => f.reason === "oversized");
+          if (oversized.length > 0) {
+            setBlocked({ kind: "oversized-files", files: oversized });
+            setPhase("blocked");
+          }
         }
       } catch {
         // best-effort; user can still commit blind
@@ -140,6 +167,13 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
+  // When we land in the error state, translate the raw log into a single
+  // actionable sentence so the user doesn't have to read a wall of stderr.
+  useEffect(() => {
+    if (phase !== "error") return;
+    setErrorSummary(parseErrorSummary(log, exitCode));
+  }, [phase, log, exitCode]);
+
   const copy = COPY[action] ?? { verb: action };
 
   return (
@@ -169,6 +203,14 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
             <X className="h-4 w-4" />
           </button>
         </header>
+
+        {phase === "blocked" && blocked && (
+          <BlockedCard
+            reason={blocked}
+            repoDisplay={repo.displayName}
+            onClose={onClose}
+          />
+        )}
 
         {phase === "confirm" && isCommitPush && (
           <CommitPushConfirm
@@ -210,16 +252,27 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           </div>
         )}
 
-        {phase !== "confirm" && (
-          <pre
-            ref={logRef}
-            className="mono flex-1 overflow-auto whitespace-pre-wrap break-words border-b border-border-subtle bg-bg px-6 py-4 text-[12px] leading-relaxed text-fg-muted"
-          >
-            {log.length === 0 ? <span className="text-fg-dim">starting…</span> : log.join("\n")}
-          </pre>
+        {(phase === "running" || phase === "done" || phase === "error") && (
+          <>
+            {phase === "error" && errorSummary && (
+              <div className="flex gap-3 border-b border-border-subtle bg-accent-diverged/8 px-6 py-3">
+                <AlertTriangle
+                  className="mt-0.5 h-4 w-4 shrink-0 text-accent-diverged"
+                  aria-hidden="true"
+                />
+                <p className="text-[13px] leading-relaxed text-fg">{errorSummary}</p>
+              </div>
+            )}
+            <pre
+              ref={logRef}
+              className="mono flex-1 overflow-auto whitespace-pre-wrap break-words border-b border-border-subtle bg-bg px-6 py-4 text-[12px] leading-relaxed text-fg-muted"
+            >
+              {log.length === 0 ? <span className="text-fg-dim">starting…</span> : log.join("\n")}
+            </pre>
+          </>
         )}
 
-        {phase !== "confirm" && (
+        {(phase === "running" || phase === "done" || phase === "error") && (
           <footer className="flex items-center justify-between px-6 py-3 text-[12px]">
             <div className={cn(
               "uppercase tracking-wider",
@@ -348,6 +401,120 @@ function CommitPushConfirm({
           )}
         >
           Commit &amp; push
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function parseErrorSummary(log: string[], exitCode: number | null): string | null {
+  const text = log.join("\n");
+  const perFile = text.match(
+    /File (\S+) is ([\d.]+) MB; this exceeds GitHub's file size limit/,
+  );
+  if (perFile) {
+    return `${perFile[1]} (${perFile[2]} MB) is over GitHub's 100 MB file-size limit. Remove it from the commit or use Git LFS.`;
+  }
+  if (/exceeds GitHub's file size limit/i.test(text)) {
+    return "One or more files exceed GitHub's 100 MB file-size limit. Remove them from the commit or use Git LFS.";
+  }
+  if (/Permission denied \(publickey\)/i.test(text)) {
+    return "SSH key was rejected. Run `gh auth setup-git` to route GitHub through HTTPS + your gh token, or add your SSH key to github.com/settings/keys.";
+  }
+  if (/non-fast-forward/i.test(text) || /tip of your current branch is behind/i.test(text)) {
+    return "Your branch is behind the remote. Pull first, then push.";
+  }
+  if (/\[rejected\]/i.test(text) && /protected branch/i.test(text)) {
+    return "Branch is protected. Push to a feature branch and open a PR instead.";
+  }
+  if (/pre-receive hook declined/i.test(text)) {
+    return "GitHub rejected the push at a server-side hook. See the log below for the specific rule.";
+  }
+  if (/Could not resolve hostname/i.test(text) || /Network is unreachable/i.test(text)) {
+    return "Can't reach the remote host. Check your network.";
+  }
+  if (/Authentication failed/i.test(text) || /could not read Username/i.test(text)) {
+    return "GitHub authentication failed. Run `gh auth login` and `gh auth setup-git`.";
+  }
+  if (/CONFLICT/.test(text)) {
+    return "Merge conflict. Open the repo, resolve the conflicts, then commit and push.";
+  }
+  if (exitCode !== null && exitCode !== 0) {
+    return `Action exited with code ${exitCode}. See log below for details.`;
+  }
+  return null;
+}
+
+function BlockedCard({
+  reason,
+  repoDisplay,
+  onClose,
+}: {
+  reason: BlockedReason;
+  repoDisplay: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-5 px-6 py-6">
+      <div className="flex gap-3 rounded-lg border border-accent-diverged/40 bg-accent-diverged/10 p-4">
+        {reason.kind === "no-push-access" ? (
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-accent-diverged" aria-hidden="true" />
+        ) : (
+          <Ban className="mt-0.5 h-4 w-4 shrink-0 text-accent-diverged" aria-hidden="true" />
+        )}
+        <div className="text-[13px] text-fg-muted">
+          {reason.kind === "no-push-access" && (
+            <>
+              <p className="font-medium text-fg">No push access to {repoDisplay}</p>
+              <p className="mt-2 leading-relaxed">
+                Your GitHub token doesn&apos;t have push permission on this repo, so this
+                action would be rejected by the server. gitdash is stopping it here so
+                you don&apos;t end up with a failed-push state to clean up.
+              </p>
+              <p className="mt-2 leading-relaxed">
+                If you think you should have access, check{" "}
+                <span className="mono">gh auth status</span> and your role on the repo
+                in github.com settings.
+              </p>
+            </>
+          )}
+          {reason.kind === "oversized-files" && (
+            <>
+              <p className="font-medium text-fg">
+                {reason.files.length === 1
+                  ? "A file exceeds GitHub's 100 MB limit"
+                  : `${reason.files.length} files exceed GitHub's 100 MB limit`}
+              </p>
+              <p className="mt-2 leading-relaxed">
+                GitHub blocks any single file over 100 MB at push time. Committing and
+                pushing from gitdash would leave you with a commit you&apos;d have to
+                undo. Remove these from the working tree (or put them in{" "}
+                <span className="mono">.gitignore</span>), or use Git LFS.
+              </p>
+              <ul className="mt-2 space-y-0.5 mono text-[11.5px]">
+                {reason.files.slice(0, 6).map((f) => (
+                  <li key={f.path} className="text-accent-diverged">
+                    {f.path}
+                    <span className="ml-2 text-fg-dim">
+                      ({(f.sizeBytes / (1024 * 1024)).toFixed(1)} MB)
+                    </span>
+                  </li>
+                ))}
+                {reason.files.length > 6 && (
+                  <li className="text-fg-dim">…and {reason.files.length - 6} more</li>
+                )}
+              </ul>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          onClick={onClose}
+          className="rounded-full border border-border px-4 py-1.5 text-[13px] font-medium text-fg-muted hover:border-fg-muted hover:text-fg"
+        >
+          Close
         </button>
       </div>
     </div>
