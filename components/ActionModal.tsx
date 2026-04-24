@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { RepoView } from "@/lib/state/store";
 import { AlertTriangle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface Props {
   repo: RepoView;
@@ -59,8 +63,87 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const [commitMessage, setCommitMessage] = useState<string>("");
   const [changes, setChanges] = useState<ChangesResponse | null>(null);
   const [changesLoading, setChangesLoading] = useState(isCommitPush);
+  const [mounted, setMounted] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const titleId = "action-modal-title";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Focus trap, Escape, initial focus, restore focus on close
+  useEffect(() => {
+    if (!mounted) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const getFocusables = () =>
+      Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (el) => !el.hasAttribute("disabled") && el.getAttribute("tabindex") !== "-1",
+      );
+
+    const initial = getFocusables()[0];
+    if (initial) {
+      initial.focus();
+    } else {
+      dialog.setAttribute("tabindex", "-1");
+      dialog.focus();
+    }
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const tabbables = getFocusables();
+      if (tabbables.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = tabbables[0]!;
+      const last = tabbables[tabbables.length - 1]!;
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+        previouslyFocused.focus();
+      }
+    };
+  }, [mounted, onClose]);
+
+  // Inert body siblings so assistive tech + pointer input stay inside the modal
+  useEffect(() => {
+    if (!mounted) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const toRestore: { el: HTMLElement; prev: string | null }[] = [];
+    for (const child of Array.from(document.body.children) as HTMLElement[]) {
+      if (child === dialog || child.contains(dialog)) continue;
+      toRestore.push({ el: child, prev: child.getAttribute("inert") });
+      child.setAttribute("inert", "");
+    }
+    return () => {
+      for (const { el, prev } of toRestore) {
+        if (prev === null) el.removeAttribute("inert");
+        else el.setAttribute("inert", prev);
+      }
+    };
+  }, [mounted]);
 
   // Fetch changes preview when entering commit-push confirm
   useEffect(() => {
@@ -142,10 +225,14 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
 
   const copy = COPY[action] ?? { verb: action };
 
-  return (
+  if (!mounted) return null;
+
+  const dialog = (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
+      aria-labelledby={titleId}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-up"
       onClick={onClose}
     >
@@ -156,7 +243,9 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
         <header className="flex items-start justify-between gap-3 border-b border-border-subtle px-6 py-5">
           <div className="min-w-0">
             <p className="text-[12px] uppercase tracking-wider text-fg-dim">{copy.verb}</p>
-            <h2 className="display mt-1 text-[22px] leading-tight text-fg">{repo.displayName}</h2>
+            <h2 id={titleId} className="display mt-1 text-[22px] leading-tight text-fg">
+              {repo.displayName}
+            </h2>
             {snap?.branch && (
               <p className="mono mt-1 text-[12px] text-fg-dim">on {snap.branch}</p>
             )}
@@ -242,6 +331,8 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
       </div>
     </div>
   );
+
+  return createPortal(dialog, document.body);
 }
 
 function CommitPushConfirm({
