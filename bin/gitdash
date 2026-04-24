@@ -6,7 +6,32 @@ set -euo pipefail
 # Access is protected by Host header validation (RFC1918 + loopback) and
 # a CSRF token required on all mutating requests.
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve the real path of this script so the launcher works when invoked
+# through a PATH symlink (quick-install.sh puts the symlink at ~/.local/bin).
+# Without this, running `gitdash` from PATH would resolve DIR to ~/.local
+# instead of ~/.local/share/gitdash, breaking the build+start paths.
+resolve_self() {
+  local src="${BASH_SOURCE[0]}"
+  if command -v readlink >/dev/null 2>&1 && readlink -f / >/dev/null 2>&1; then
+    readlink -f "$src"
+  elif command -v realpath >/dev/null 2>&1; then
+    realpath "$src"
+  else
+    # Manual symlink walk (macOS without coreutils, minimal BusyBox, etc.)
+    while [[ -L "$src" ]]; do
+      local target
+      target="$(readlink "$src")"
+      if [[ "$target" = /* ]]; then
+        src="$target"
+      else
+        src="$(cd "$(dirname "$src")" && pwd)/$target"
+      fi
+    done
+    cd "$(dirname "$src")" && echo "$(pwd)/$(basename "$src")"
+  fi
+}
+SELF="$(resolve_self)"
+DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 cd "$DIR"
 
 PORT="${GITDASH_PORT:-7420}"
