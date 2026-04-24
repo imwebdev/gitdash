@@ -20,14 +20,15 @@ const SUSPICIOUS_NAME_PATTERNS: RegExp[] = [
   /\.pfx$/i,
 ];
 
-const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10 MB
+const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10 MB — user warning
+const OVERSIZED_THRESHOLD = 100 * 1024 * 1024; // 100 MB — GitHub's hard limit, block
 const MAX_ENTRIES = 500;
 
 interface ChangeEntry {
   path: string;
   status: string;
   sizeBytes: number;
-  reason: "secret" | "large" | null;
+  reason: "secret" | "large" | "oversized" | null;
 }
 
 export async function GET(
@@ -82,14 +83,23 @@ export async function GET(
       sizeBytes = 0;
     }
 
+    // Classification order matters: oversized is a hard block (GitHub will
+    // reject the push), so it wins over the informational "secret"/"large"
+    // reasons. The user needs the oversized signal at the top of the UI.
     let reason: ChangeEntry["reason"] = null;
-    if (matchesSecret) reason = "secret";
+    if (sizeBytes >= OVERSIZED_THRESHOLD) reason = "oversized";
+    else if (matchesSecret) reason = "secret";
     else if (sizeBytes > LARGE_FILE_THRESHOLD) reason = "large";
 
     entries.push({ path: filePath, status, sizeBytes, reason });
   }
 
-  const suspicious = entries.filter((e) => e.reason !== null);
+  // Suspicious = advisory warnings (secrets / large-but-pushable). Oversized
+  // files live in a separate bucket because they're a hard block, not a
+  // "heads up".
+  const suspicious = entries.filter(
+    (e) => e.reason === "secret" || e.reason === "large",
+  );
 
   return NextResponse.json({
     files: entries,
