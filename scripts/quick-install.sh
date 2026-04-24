@@ -14,7 +14,11 @@
 #   6. Symlinks a `gitdash` launcher into ~/.local/bin
 #   7. Prints next steps
 #
-# Non-goals: systemd units, Windows support, auto-sudo for package install.
+# On Linux, if any of {git, node, gh} are missing, the script offers to
+# install them automatically via apt or dnf (requires sudo). Decline to
+# fall back to manual install hints.
+#
+# Non-goals: systemd units, Windows support, auto-brew on macOS.
 # Those are separate features tracked in their own issues.
 
 set -euo pipefail
@@ -95,14 +99,13 @@ check_node() {
 
 check_prereqs() {
   local os="$1"
-  local missing=0
+  local missing=()
 
   step "Checking prerequisites"
 
   if ! have git; then
     fail "git not found"
-    install_hint_git "$os"
-    missing=$((missing + 1))
+    missing+=(git)
   else
     ok "git: $(git --version | awk '{print $3}')"
   fi
@@ -113,23 +116,135 @@ check_prereqs() {
     else
       fail "node not found"
     fi
-    install_hint_node "$os"
-    missing=$((missing + 1))
+    missing+=(node)
   else
     ok "node: $(node --version)"
   fi
 
   if ! have gh; then
     fail "gh (GitHub CLI) not found"
-    install_hint_gh "$os"
-    missing=$((missing + 1))
+    missing+=(gh)
   else
     ok "gh: $(gh --version | head -n 1)"
   fi
 
-  if [ "$missing" -gt 0 ]; then
-    die "Install the missing tools above, then re-run this script."
+  if [ "${#missing[@]}" -eq 0 ]; then
+    return 0
   fi
+
+  # Offer auto-install on Linux with apt/dnf. Leave macOS manual (brew).
+  if [ "$os" = "linux" ] && { have apt-get || have dnf; }; then
+    echo
+    warn "Missing: ${missing[*]}"
+    printf "  I can install them for you using sudo %s.\n" "$(have apt-get && echo apt || echo dnf)"
+    local ans=""
+    if [ -t 0 ]; then
+      read -rp "  Install missing tools now? [Y/n] " ans
+    elif [ -r /dev/tty ]; then
+      read -rp "  Install missing tools now? [Y/n] " ans </dev/tty
+    else
+      warn "No TTY available for confirmation — skipping auto-install"
+      ans="n"
+    fi
+    ans="${ans:-Y}"
+    if [[ "$ans" =~ ^[Yy] ]]; then
+      auto_install_linux "${missing[@]}"
+
+      # Re-verify after install
+      local still_missing=()
+      have git || still_missing+=(git)
+      check_node || still_missing+=(node)
+      have gh || still_missing+=(gh)
+
+      if [ "${#still_missing[@]}" -eq 0 ]; then
+        ok "All prerequisites satisfied"
+        return 0
+      fi
+
+      fail "Still missing after auto-install: ${still_missing[*]}"
+      for t in "${still_missing[@]}"; do
+        case "$t" in
+          git)  install_hint_git  "$os" ;;
+          node) install_hint_node "$os" ;;
+          gh)   install_hint_gh   "$os" ;;
+        esac
+      done
+      die "Auto-install did not get everything. Install the rest manually, then re-run."
+    fi
+  fi
+
+  # Fallback: print manual install hints and die
+  for t in "${missing[@]}"; do
+    case "$t" in
+      git)  install_hint_git  "$os" ;;
+      node) install_hint_node "$os" ;;
+      gh)   install_hint_gh   "$os" ;;
+    esac
+  done
+  die "Install the missing tools above, then re-run this script."
+}
+
+# ---- auto-install (Linux apt/dnf) ------------------------------------------
+auto_install_linux() {
+  local tools=("$@")
+  if have apt-get; then
+    auto_install_apt "${tools[@]}"
+  elif have dnf; then
+    auto_install_dnf "${tools[@]}"
+  fi
+}
+
+auto_install_apt() {
+  local tools=("$@")
+  step "Installing missing prerequisites via apt"
+  sudo apt-get update -qq
+  local tool
+  for tool in "${tools[@]}"; do
+    case "$tool" in
+      git)
+        sudo apt-get install -y git
+        ;;
+      node)
+        # NodeSource official 20.x repo — ensures we get node >= 20
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+        ;;
+      gh)
+        # GitHub CLI's official apt repo (gh is not in Ubuntu's default repos)
+        have wget || sudo apt-get install -y wget
+        sudo mkdir -p -m 755 /etc/apt/keyrings
+        wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+          | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
+        sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+          | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y gh
+        ;;
+    esac
+  done
+}
+
+auto_install_dnf() {
+  local tools=("$@")
+  step "Installing missing prerequisites via dnf"
+  local tool
+  for tool in "${tools[@]}"; do
+    case "$tool" in
+      git)
+        sudo dnf install -y git
+        ;;
+      node)
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo -E bash -
+        sudo dnf install -y nodejs
+        ;;
+      gh)
+        sudo dnf install -y 'dnf-command(config-manager)' || true
+        sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+        sudo dnf install -y gh
+        ;;
+    esac
+  done
 }
 
 # ---- gh auth ---------------------------------------------------------------
