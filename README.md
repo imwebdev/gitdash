@@ -42,54 +42,56 @@ The installer prints a URL when it's done — open it in your browser.
 
 ## 🪟 Windows — install
 
-**Windows is not natively supported yet.** `install.sh` is a bash script and uses `systemd`, which Windows does not have. Progress tracked in [#21](https://github.com/imwebdev/gitdash/issues/21).
+### One command. Paste into PowerShell.
 
-### ⚠️ Seeing `The token '&&' is not a valid statement separator` in PowerShell?
-
-That's **expected** — PowerShell doesn't understand bash syntax. Do **not** keep trying the Linux command in PowerShell, CMD, or plain Git Bash. You need WSL (below).
-
-### How to install today — use WSL 2 (~5 minutes)
-
-WSL (Windows Subsystem for Linux) gives you a real Ubuntu shell inside Windows.
-
-**Step 1** — Open **PowerShell as Administrator** (right-click the Start button → "Terminal (Admin)" or "Windows PowerShell (Admin)") and run:
+Open **PowerShell** (press `Win + R`, type `powershell`, press Enter) and paste this:
 
 ```powershell
-wsl --install
+iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.ps1 | iex
 ```
 
-**Step 2** — Reboot Windows when it asks.
+That's it. The script handles everything:
 
-**Step 3** — After reboot, Ubuntu launches automatically and asks for a Linux username + password. Set them. (This is the user inside WSL, unrelated to your Windows login.)
+1. If WSL (the Linux layer Windows uses) isn't installed, it installs it for you — it will ask Windows for admin permission (click **Yes** on the UAC prompt), run `wsl --install`, and tell you to reboot.
+2. After you reboot and Ubuntu is set up (it asks for a Linux username + password the first time), **paste the same PowerShell command again**. It will detect WSL is ready and install gitdash.
+3. When it's done, open a new PowerShell window, type `wsl`, then type `gitdash start`, and open http://127.0.0.1:7420 in any Windows browser.
 
-**Step 4** — You're now in a Linux shell (prompt looks like `user@hostname:~$`). Paste this:
+### Common errors you can ignore now
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.sh)
-```
+If you previously tried the Linux command in PowerShell and got `The token '&&' is not a valid statement separator` or `The '<' operator is reserved for future use` — that's PowerShell rejecting bash syntax. Use the PowerShell command above instead. It's native PowerShell and paste-safe.
 
-**Step 5** — When the installer finishes, it prints a URL like `http://127.0.0.1:7420`. Open that in any Windows browser (Edge, Chrome, Firefox) — WSL forwards the port automatically.
+### Why does Windows need WSL?
 
-To come back into WSL later: open a new PowerShell window and type `wsl`, or launch "Ubuntu" from the Start menu.
+gitdash uses Linux-only features (`systemd`, bash scripts). It can't run on Windows natively today. Native Windows support is tracked in [#21](https://github.com/imwebdev/gitdash/issues/21). WSL is Microsoft's official "run Linux inside Windows" feature — it's a one-time setup, then gitdash behaves identically to a real Linux install.
 
 ---
 
 ## 🍎 macOS — install
 
-**macOS is not natively supported yet.** Native launchd-based install is being tracked in [#21](https://github.com/imwebdev/gitdash/issues/21).
+Open **Terminal** (⌘+Space → type "Terminal" → Enter) and paste:
 
-### Workaround today — run gitdash on a Linux box, open it from your Mac
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.sh)
+```
 
-gitdash runs as a web server, so it doesn't need to run on the same machine you view it from.
+The installer detects macOS, checks your prereqs (`git`, `node 20+`, `gh` — install with `brew install ...` if missing), walks through `gh auth login`, clones gitdash to `~/.local/share/gitdash`, builds it, and drops a `gitdash` launcher into `~/.local/bin`.
 
-1. On any Linux server you have SSH access to (cloud VM, home server, Raspberry Pi, etc.), run:
-   ```bash
-   bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.sh)
-   ```
-2. Note the LAN IP the installer prints (e.g. `http://192.168.1.50:7420`).
-3. On your Mac, open that URL in Safari / Chrome / etc.
+Start it with:
 
-The installer binds to `0.0.0.0` by default, so it's reachable from any device on the same network.
+```bash
+gitdash start
+```
+
+…then open http://127.0.0.1:7420 in Safari / Chrome / Arc / whatever.
+
+### macOS limitations today
+
+- **No auto-start on login** — native `launchd` integration is tracked in [#21](https://github.com/imwebdev/gitdash/issues/21). You run `gitdash start` manually each time.
+- **No `brew install gitdash` formula yet** — use the one-liner above.
+
+### Alternative: run gitdash on a remote Linux box, view from Mac
+
+If you already have a Linux server (cloud VM, home server, Raspberry Pi, etc.), install gitdash there instead — the installer binds `0.0.0.0` by default, so your Mac can open the LAN URL it prints.
 
 ---
 
