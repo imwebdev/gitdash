@@ -13,6 +13,8 @@ interface Props {
   repos: RepoView[];
   csrfToken: string;
   defaultCollapsed?: boolean;
+  expandedRepoId: number | null;
+  onToggleRepo: (id: number) => void;
 }
 
 const TINT: Record<GroupKind, string> = {
@@ -44,6 +46,8 @@ export function RepoGroup({
   repos,
   csrfToken,
   defaultCollapsed = false,
+  expandedRepoId,
+  onToggleRepo,
 }: Props) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const isEmpty = repos.length === 0;
@@ -61,7 +65,7 @@ export function RepoGroup({
     >
       <header
         className={cn(
-          "flex items-start gap-5 px-6 pb-4 pt-6",
+          "flex items-start gap-3 px-4 pb-3 pt-5 sm:gap-5 sm:px-6 sm:pb-4 sm:pt-6",
           !isEmpty && "cursor-pointer",
         )}
         onClick={isEmpty ? undefined : () => setCollapsed((v) => !v)}
@@ -75,22 +79,22 @@ export function RepoGroup({
       >
         <div
           className={cn(
-            "display shrink-0 text-[64px] leading-none tracking-display-tight",
+            "display shrink-0 text-[44px] leading-none tracking-display-tight sm:text-[64px]",
             ACCENT[kind],
           )}
         >
           {repos.length}
         </div>
 
-        <div className="flex flex-1 flex-col pt-2">
-          <h2 className="display text-[22px] leading-tight text-fg">{headline}</h2>
-          <p className="mt-1 text-[13px] text-fg-muted">{body}</p>
+        <div className="flex min-w-0 flex-1 flex-col pt-1 sm:pt-2">
+          <h2 className="display text-[18px] leading-tight text-fg sm:text-[22px]">{headline}</h2>
+          <p className="mt-1 text-[12px] text-fg-muted sm:text-[13px]">{body}</p>
         </div>
 
         {!isEmpty && (
           <ChevronRight
             className={cn(
-              "mt-3 h-4 w-4 shrink-0 text-fg-dim transition-transform",
+              "mt-2 h-4 w-4 shrink-0 text-fg-dim transition-transform sm:mt-3",
               !collapsed && "rotate-90",
             )}
           />
@@ -107,7 +111,7 @@ export function RepoGroup({
         <div className="border-t border-border-subtle">
           <div
             className={cn(
-              "grid items-center gap-x-4 border-b border-border-subtle bg-bg/30 px-6 py-2 text-[10px] uppercase tracking-[0.12em] text-fg-dim",
+              "hidden items-center gap-x-4 border-b border-border-subtle bg-bg/30 px-6 py-2 text-[10px] uppercase tracking-[0.12em] text-fg-dim sm:grid",
               ROW_GRID,
             )}
           >
@@ -126,6 +130,8 @@ export function RepoGroup({
                 repo={repo}
                 kind={kind}
                 csrfToken={csrfToken}
+                expanded={expandedRepoId === repo.id}
+                onToggle={() => onToggleRepo(repo.id)}
               />
             ))}
           </div>

@@ -229,6 +229,37 @@ export function getAllSnapshots(): Map<number, SnapshotRow> {
   return new Map(rows.map((r) => [r.repo_id, rawToSnapshot(r)]));
 }
 
+export interface ActionLogRow {
+  id: number;
+  action: string;
+  startedAt: number;
+  finishedAt: number | null;
+  exitCode: number | null;
+}
+
+interface ActionLogRaw {
+  id: number;
+  action: string;
+  started_at: number;
+  finished_at: number | null;
+  exit_code: number | null;
+}
+
+export function getRecentActions(repoId: number, limit = 5): ActionLogRow[] {
+  const rows = getDb()
+    .prepare<[number, number], ActionLogRaw>(
+      "SELECT id, action, started_at, finished_at, exit_code FROM actions_log WHERE repo_id = ? ORDER BY started_at DESC LIMIT ?",
+    )
+    .all(repoId, limit);
+  return rows.map((r) => ({
+    id: r.id,
+    action: r.action,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
+    exitCode: r.exit_code,
+  }));
+}
+
 function rawToRepoRow(r: RepoRaw): RepoRow {
   return {
     id: r.id,
