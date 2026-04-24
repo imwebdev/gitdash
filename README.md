@@ -33,6 +33,7 @@ If not installed:
 - **Ubuntu/Debian:** `sudo apt install git`
 - **Fedora/RHEL:** `sudo dnf install git`
 - **Arch:** `sudo pacman -S git`
+- **macOS:** `xcode-select --install` (or `brew install git`)
 
 ### 3. GitHub CLI (`gh`)
 
@@ -44,6 +45,7 @@ If not installed:
 - **Ubuntu/Debian:** [official install instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian-ubuntu-linux-raspberry-pi-os-apt)
 - **Fedora/RHEL:** `sudo dnf install gh`
 - **Arch:** `sudo pacman -S github-cli`
+- **macOS:** `brew install gh`
 
 ### 4. Sign `gh` in to your GitHub account
 
@@ -73,10 +75,18 @@ Should show `✓ Logged in to github.com account <your-username>`.
 
 ## Install gitdash
 
+### Linux / macOS
+
 ```bash
 git clone https://github.com/imwebdev/gitdash.git
 cd gitdash
 ./install.sh
+```
+
+…or paste the one-liner (same thing, without the clone step):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.sh)
 ```
 
 That's it. The installer will:
@@ -84,8 +94,17 @@ That's it. The installer will:
 1. Verify all the above prereqs
 2. Install node dependencies and build
 3. Generate a persistent CSRF token (so your browser doesn't get logged out on every restart)
-4. Install a systemd user service so gitdash auto-restarts on crash
-5. Optionally enable lingering (so it survives logout and reboot — asks for `sudo`)
+4. **Linux:** install a systemd user service so gitdash auto-restarts on crash; optionally enable lingering (so it survives logout and reboot — asks for `sudo`)
+5. **macOS:** install a LaunchAgent at `~/Library/LaunchAgents/com.gitdash.plist` so gitdash auto-starts at login and restarts on crash. Logs go to `~/Library/Logs/gitdash.log`.
+
+### Windows (WSL)
+
+Native Windows support isn't shipped yet. The supported path is:
+
+1. Install WSL2 + Ubuntu: `wsl --install` in an admin PowerShell, reboot, launch Ubuntu once to finish setup.
+2. Inside Ubuntu, follow the Linux install steps above. gitdash runs on `http://127.0.0.1:7420` from Windows Chrome/Edge too — WSL forwards loopback automatically.
+
+Native Windows (PowerShell installer + service) is tracked for a follow-up once the WSL path is stable for Windows users.
 
 When it finishes you'll see something like:
 

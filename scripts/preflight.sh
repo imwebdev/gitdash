@@ -65,14 +65,25 @@ check "gh authenticated" "gh auth status" "Run: gh auth login   (choose GitHub.c
 echo
 echo "System integration"
 echo "──────────────"
-check "systemctl available" "command -v systemctl" "systemd required for auto-start. Manual launch via ./bin/gitdash start still works."
-check "port 7420 free" "! ss -tln 2>/dev/null | grep -q ':7420 '" "Port 7420 is in use. Stop the other service or set GITDASH_PORT=<other> before running install."
+UNAME_S="$(uname -s)"
+if [[ "$UNAME_S" == "Darwin" ]]; then
+  check "launchctl available" "command -v launchctl" "launchd ships with macOS. This should never fail."
+  # ss doesn't exist on macOS; use lsof instead.
+  check "port 7420 free" "! lsof -nP -iTCP:7420 -sTCP:LISTEN >/dev/null 2>&1" "Port 7420 is in use. Stop the other service or set GITDASH_PORT=<other> before running install."
+else
+  check "systemctl available" "command -v systemctl" "systemd required for auto-start. Manual launch via ./bin/gitdash start still works."
+  check "port 7420 free" "! ss -tln 2>/dev/null | grep -q ':7420 '" "Port 7420 is in use. Stop the other service or set GITDASH_PORT=<other> before running install."
+fi
 
 echo
 echo "Optional"
 echo "──────────────"
 warn "VS Code (\`code\`) available" "command -v code" "Default editor is \`code\`. Override with GITDASH_EDITOR=<your-editor> if you use something else."
-warn "x-terminal-emulator available" "command -v x-terminal-emulator" "Used for the 'Open in terminal' button. Override with GITDASH_TERMINAL=<gnome-terminal|kitty|alacritty|...> if needed."
+if [[ "$UNAME_S" == "Darwin" ]]; then
+  warn "Terminal.app available" "[ -d /System/Applications/Utilities/Terminal.app ] || [ -d /Applications/Utilities/Terminal.app ]" "Override with GITDASH_TERMINAL=<iterm|wezterm|...> if you prefer a different terminal."
+else
+  warn "x-terminal-emulator available" "command -v x-terminal-emulator" "Used for the 'Open in terminal' button. Override with GITDASH_TERMINAL=<gnome-terminal|kitty|alacritty|...> if needed."
+fi
 
 echo
 if [[ $errors -gt 0 ]]; then

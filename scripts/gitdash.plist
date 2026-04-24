@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gitdash</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{REPO_DIR}}/bin/gitdash</string>
+        <string>start</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{REPO_DIR}}</string>
+
+    <!-- Run on login. Survives logout (LaunchAgents are re-loaded on next
+         login). For macOS, this is the closest analogue to systemd's
+         Restart=on-failure + WantedBy=default.target. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if gitdash exits abnormally. SuccessfulExit=false
+         means "keep alive unless it exits 0", matching Restart=on-failure. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Throttle restart loops so a broken build doesn't spin the CPU. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Logs. journalctl is the systemd equivalent; macOS uses flat files. -->
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/Library/Logs/gitdash.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/Library/Logs/gitdash.log</string>
+
+    <!-- GUI login sessions pick up the full user PATH; background agents do
+         not. We need node/npm/gh on PATH so the launcher can find them. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{{PATH}}</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+    </dict>
+</dict>
+</plist>

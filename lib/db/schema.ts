@@ -2,8 +2,22 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import { mkdirSync } from "node:fs";
 
-const DEFAULT_DB_PATH = process.env.GITDASH_DB
-  ?? path.join(process.env.HOME ?? ".", ".local", "state", "gitdash", "gitdash.sqlite");
+// Platform-aware default DB path. Honor GITDASH_DB first, then XDG_STATE_HOME
+// (set by systemd user sessions and respected on Linux), then per-OS
+// convention. macOS uses ~/Library/Application Support/gitdash/ because that's
+// where GUI apps are expected to keep their data; Linux stays on XDG state.
+function defaultDbPath(): string {
+  if (process.env.GITDASH_DB) return process.env.GITDASH_DB;
+  const xdg = process.env.XDG_STATE_HOME;
+  if (xdg) return path.join(xdg, "gitdash", "gitdash.sqlite");
+  const home = process.env.HOME ?? ".";
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "gitdash", "gitdash.sqlite");
+  }
+  return path.join(home, ".local", "state", "gitdash", "gitdash.sqlite");
+}
+
+const DEFAULT_DB_PATH = defaultDbPath();
 
 let instance: Database.Database | null = null;
 
