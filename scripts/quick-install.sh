@@ -12,14 +12,19 @@
 #   4. Clones or updates gitdash under $XDG_DATA_HOME/gitdash
 #   5. Installs deps + builds
 #   6. Symlinks a `gitdash` launcher into ~/.local/bin
-#   7. Prints next steps
+#   7. On Linux with systemd: installs a systemd --user service so gitdash
+#      runs in the background, survives SSH logout, and auto-starts on boot.
+#      Offers `sudo loginctl enable-linger` so the service starts pre-login.
+#      If UFW is active, offers to open port 7420.
+#      On macOS / systemd-less Linux: falls back to exec'ing the launcher
+#      in the foreground (Ctrl-C stops it).
+#   8. Prints next steps + URLs
 #
 # On Linux, if any of {git, node, gh} are missing, the script offers to
 # install them automatically via apt or dnf (requires sudo). Decline to
 # fall back to manual install hints.
 #
-# Non-goals: systemd units, Windows support, auto-brew on macOS.
-# Those are separate features tracked in their own issues.
+# Non-goals: Windows support, auto-brew on macOS.
 
 set -euo pipefail
 
@@ -321,8 +326,132 @@ install_launcher() {
   esac
 }
 
+# ---- systemd user service (Linux only) -------------------------------------
+# Returns 0 if the service was installed + started, 1 if systemd isn't usable
+# on this box (macOS, minimal WSL, container without cgroups, etc.).
+setup_systemd_service() {
+  # systemd present?
+  command -v systemctl >/dev/null 2>&1 || return 1
+
+  # Is there a reachable user systemd instance? If XDG_RUNTIME_DIR isn't set
+  # or the user manager isn't running, every `systemctl --user` call will
+  # hang or fail. show-environment is the cheapest probe.
+  systemctl --user show-environment >/dev/null 2>&1 || return 1
+
+  local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gitdash"
+  local systemd_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  local env_file="$config_dir/env"
+  local service_file="$systemd_dir/gitdash.service"
+  local template="$INSTALL_DIR/scripts/gitdash.service"
+
+  if [ ! -f "$template" ]; then
+    warn "systemd template not found at $template — skipping service setup"
+    return 1
+  fi
+
+  step "Installing systemd user service"
+
+  mkdir -p "$config_dir" "$systemd_dir"
+
+  # Env file: keep existing (to preserve CSRF token) or create fresh
+  if [ -f "$env_file" ]; then
+    ok "existing env at $env_file — keeping"
+  else
+    local csrf_token
+    csrf_token="$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')"
+    cat > "$env_file" <<EOF
+# gitdash environment — sourced by the systemd service.
+# Edit values below to override defaults. Restart after changes:
+#   systemctl --user restart gitdash
+
+GITDASH_CSRF_TOKEN=$csrf_token
+GITDASH_PORT=${GITDASH_PORT:-7420}
+GITDASH_BIND=${GITDASH_BIND:-0.0.0.0}
+EOF
+    chmod 600 "$env_file"
+    ok "wrote $env_file (mode 600)"
+  fi
+
+  # Render service file with absolute install path
+  sed "s|{{REPO_DIR}}|$INSTALL_DIR|g" "$template" > "$service_file"
+  ok "wrote $service_file"
+
+  # If an older instance is running, stop it so enable --now can rebind port
+  if systemctl --user is-active gitdash >/dev/null 2>&1; then
+    systemctl --user stop gitdash >/dev/null 2>&1 || true
+  fi
+
+  systemctl --user daemon-reload
+  if systemctl --user enable --now gitdash >/dev/null 2>&1; then
+    ok "gitdash service enabled and started"
+    return 0
+  else
+    warn "systemctl --user enable --now gitdash failed — falling back to foreground"
+    return 1
+  fi
+}
+
+# Enable lingering so the service survives logout + auto-starts on boot.
+# Prompts for sudo once. No-op if already enabled.
+enable_linger_if_wanted() {
+  command -v loginctl >/dev/null 2>&1 || return 0
+  if loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
+    ok "linger already enabled for $USER"
+    return 0
+  fi
+
+  echo
+  printf '  %sEnable linger?%s (gitdash keeps running after you logout, and\n' "$C_BOLD" "$C_RESET"
+  printf '  starts automatically on boot. Needs sudo once, no password the\n'
+  printf '  next time you run this script.)\n'
+  local ans=""
+  if [ -t 0 ]; then
+    read -rp "  Enable linger? [Y/n] " ans
+  elif [ -r /dev/tty ]; then
+    read -rp "  Enable linger? [Y/n] " ans </dev/tty
+  fi
+  ans="${ans:-Y}"
+  if [[ "$ans" =~ ^[Yy] ]]; then
+    if sudo loginctl enable-linger "$USER"; then
+      ok "linger enabled"
+    else
+      warn "enable-linger failed. Run manually later:  sudo loginctl enable-linger \$USER"
+    fi
+  else
+    warn "linger skipped — gitdash will stop when you close your last session"
+  fi
+}
+
+# If UFW is active, offer to open the gitdash port so LAN clients can reach it.
+allow_ufw_port() {
+  command -v ufw >/dev/null 2>&1 || return 0
+  # ufw status requires root on most distros
+  if ! sudo -n ufw status 2>/dev/null | grep -q "Status: active"; then
+    # Either sudo would prompt (fine to skip silently) or ufw isn't active
+    return 0
+  fi
+  local port="${GITDASH_PORT:-7420}"
+  if sudo ufw status 2>/dev/null | grep -qE "^${port}/tcp.*ALLOW"; then
+    ok "ufw already allows ${port}/tcp"
+    return 0
+  fi
+
+  echo
+  printf '  UFW firewall is active. Allow port %s/tcp so your browser can reach gitdash?\n' "$port"
+  local ans=""
+  if [ -t 0 ]; then
+    read -rp "  Allow ${port}/tcp? [Y/n] " ans
+  elif [ -r /dev/tty ]; then
+    read -rp "  Allow ${port}/tcp? [Y/n] " ans </dev/tty
+  fi
+  ans="${ans:-Y}"
+  if [[ "$ans" =~ ^[Yy] ]]; then
+    sudo ufw allow "${port}/tcp" >/dev/null && ok "ufw: allowed ${port}/tcp"
+  fi
+}
+
 # ---- finale ----------------------------------------------------------------
-print_next_steps() {
+print_next_steps_foreground() {
   local port="${GITDASH_PORT:-7420}"
   printf '\n%sgitdash installed.%s\n\n' "$C_GREEN$C_BOLD" "$C_RESET"
   printf '  Start it:   %sgitdash start%s\n' "$C_BOLD" "$C_RESET"
@@ -332,21 +461,35 @@ print_next_steps() {
   printf '  Re-install: re-run this command; it is idempotent.\n\n'
 }
 
-# Start gitdash in the foreground, replacing this shell with next-server so
-# the user sees the running server's output and URL directly. Ctrl-C stops it.
-# For always-on / systemd-managed installs, ./install.sh is still the path.
-start_gitdash() {
+print_next_steps_systemd() {
+  local port="${GITDASH_PORT:-7420}"
+  local lan_ip
+  lan_ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' | head -1 || true)"
+
+  printf '\n%sgitdash is running.%s\n\n' "$C_GREEN$C_BOLD" "$C_RESET"
+  printf '  Dashboard (this box):  %shttp://127.0.0.1:%s%s\n' "$C_BOLD" "$port" "$C_RESET"
+  [ -n "$lan_ip" ] && \
+    printf '  Dashboard (LAN):       %shttp://%s:%s%s\n' "$C_BOLD" "$lan_ip" "$port" "$C_RESET"
+  printf '\n'
+  printf '  Status:     %ssystemctl --user status gitdash%s\n' "$C_DIM" "$C_RESET"
+  printf '  Logs:       %sjournalctl --user -u gitdash -f%s\n' "$C_DIM" "$C_RESET"
+  printf '  Restart:    %ssystemctl --user restart gitdash%s\n' "$C_DIM" "$C_RESET"
+  printf '  Stop:       %ssystemctl --user stop gitdash%s\n' "$C_DIM" "$C_RESET"
+  printf '  Source:     %s\n\n' "$INSTALL_DIR"
+}
+
+# Start gitdash in the foreground (fallback when systemd isn't available).
+# exec'ing so the user sees the server's URL and Ctrl-C works cleanly.
+start_gitdash_foreground() {
   local launcher="$INSTALL_DIR/bin/gitdash"
   if [ ! -x "$launcher" ]; then
     warn "Launcher not found or not executable at $launcher — skipping auto-start"
     return 0
   fi
 
-  step "Starting gitdash"
-  printf '  %s(Ctrl-C to stop. For a persistent systemd install, use ./install.sh instead.)%s\n\n' \
+  step "Starting gitdash (foreground — systemd not available on this box)"
+  printf '  %sCtrl-C to stop. On a logout, the server will stop too.%s\n\n' \
     "$C_DIM" "$C_RESET"
-
-  # Invoke the launcher at its real path to avoid any PATH / symlink ambiguity.
   exec "$launcher" start
 }
 
@@ -367,16 +510,26 @@ main() {
   fetch_repo
   build_gitdash
   install_launcher
-  print_next_steps
 
-  # Auto-start unless explicitly opted out (CI, headless provisioning, etc.)
+  # Opt-out path: no systemd, no foreground exec, just print instructions.
   if [ "${GITDASH_NO_START:-0}" = "1" ]; then
+    print_next_steps_foreground
     printf '  %sGITDASH_NO_START=1 set — not auto-starting. Run %sgitdash start%s when ready.%s\n\n' \
       "$C_DIM" "$C_BOLD" "$C_DIM" "$C_RESET"
     return 0
   fi
 
-  start_gitdash
+  # Preferred path: systemd user service (survives logout, auto-starts on boot).
+  # Falls through to foreground if systemd isn't usable on this box.
+  if [ "$os" = "linux" ] && setup_systemd_service; then
+    enable_linger_if_wanted
+    allow_ufw_port
+    print_next_steps_systemd
+    return 0
+  fi
+
+  print_next_steps_foreground
+  start_gitdash_foreground
 }
 
 main "$@"
