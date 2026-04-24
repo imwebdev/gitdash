@@ -80,3 +80,7 @@ export async function ensureWatcherStarted(): Promise<WatcherPool> {
   }
   return g[globalKey]!;
 }
+
+export function getWatcher(): WatcherPool | null {
+  return g[globalKey] ?? null;
+}
