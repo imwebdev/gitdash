@@ -2,6 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## NORTH STAR — gitdash is for beginners
+
+**The user of gitdash is a beginner.** Every interaction must be doable by clicking buttons in a browser. **No solution is acceptable that requires the end user to:**
+
+- Open a terminal (PowerShell, WSL, Terminal, bash, anything)
+- Type a shell command
+- Edit a config file by hand
+- Read a stack trace, error code, or technical jargon
+- Know what `gh`, `git`, `systemd`, `wsl`, `npm`, or any CLI tool is
+
+If a feature can fail in a way that requires the user to drop to a terminal to fix it, **that failure mode is a P0 bug** and must be fixed by adding a button in the UI that does the recovery automatically — not by writing a help-desk doc that says "run `gh auth login`".
+
+This rule applies to:
+- Install / uninstall (one-liner only; no manual cleanup)
+- Auth (gh, git credentials) — must be a button + browser flow, not a terminal command
+- Sync errors (push fails, pull fails, merge conflicts) — must surface in UI with a click-to-fix path
+- Service management (start/stop/status) — must be a button, not `systemctl`
+- Configuration changes — must be a settings page, not editing JSON
+
+**When triaging any bug or implementing any feature, ask: "can a beginner who has never used a terminal recover from this on their own?" If the answer is no, add a button before shipping.**
+
 ## Workflow — GitHub-first (mandatory)
 
 Inherited from `~/.claude/CLAUDE.md` and `~/CLAUDE.md`. **Every bug, feature, and task needs a GitHub issue before any code is written.** No exceptions, including when the user types a request directly into chat — first action is to create or find the issue.
