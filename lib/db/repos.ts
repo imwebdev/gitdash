@@ -54,6 +54,11 @@ export interface SnapshotRow {
   weirdFlags: string[];
   collectedAt: number;
   remoteCheckedAt: number | null;
+  /**
+   * GitHub permission on the remote: true = can push, false = read-only,
+   * null = unknown / non-GitHub remote / not yet checked.
+   */
+  canPush: boolean | null;
 }
 
 export function upsertDiscoveredRepo(discovered: DiscoveredRepo, now: number): RepoRow {
@@ -122,6 +127,7 @@ export function upsertSnapshot(
   weirdFlags: string[],
   now: number,
   openPrCount: number | null = null,
+  canPush: boolean | null = null,
 ): void {
   getDb().prepare(
     `INSERT INTO snapshots (
@@ -129,13 +135,15 @@ export function upsertSnapshot(
       ahead, behind, dirty_tracked, staged, staged_deletions,
       untracked, conflicted, detached, last_commit_sha, last_commit_ts,
       last_commit_subject, remote_url, remote_ahead, remote_behind,
-      remote_state, remote_sha, open_pr_count, weird_flags, collected_at, remote_checked_at
+      remote_state, remote_sha, open_pr_count, weird_flags, collected_at, remote_checked_at,
+      can_push
     ) VALUES (
       @repo_id, @branch, @upstream, @head_sha, @upstream_sha,
       @ahead, @behind, @dirty_tracked, @staged, @staged_deletions,
       @untracked, @conflicted, @detached, @last_commit_sha, @last_commit_ts,
       @last_commit_subject, @remote_url, @remote_ahead, @remote_behind,
-      @remote_state, @remote_sha, @open_pr_count, @weird_flags, @collected_at, @remote_checked_at
+      @remote_state, @remote_sha, @open_pr_count, @weird_flags, @collected_at, @remote_checked_at,
+      @can_push
     )
     ON CONFLICT(repo_id) DO UPDATE SET
       branch = excluded.branch,
@@ -161,7 +169,8 @@ export function upsertSnapshot(
       open_pr_count = COALESCE(excluded.open_pr_count, open_pr_count),
       weird_flags = excluded.weird_flags,
       collected_at = excluded.collected_at,
-      remote_checked_at = COALESCE(excluded.remote_checked_at, remote_checked_at)`,
+      remote_checked_at = COALESCE(excluded.remote_checked_at, remote_checked_at),
+      can_push = COALESCE(excluded.can_push, can_push)`,
   ).run({
     repo_id: repoId,
     branch: snap.status.branch,
@@ -188,6 +197,7 @@ export function upsertSnapshot(
     weird_flags: JSON.stringify(weirdFlags),
     collected_at: now,
     remote_checked_at: remote ? now : null,
+    can_push: canPush === null ? null : canPush ? 1 : 0,
   });
 }
 
@@ -217,6 +227,7 @@ interface SnapshotRaw {
   weird_flags: string;
   collected_at: number;
   remote_checked_at: number | null;
+  can_push: number | null;
 }
 
 export function getSnapshot(repoId: number): SnapshotRow | null {
@@ -307,5 +318,9 @@ function rawToSnapshot(r: SnapshotRaw): SnapshotRow {
     weirdFlags,
     collectedAt: r.collected_at,
     remoteCheckedAt: r.remote_checked_at,
+    canPush:
+      r.can_push === null || r.can_push === undefined
+        ? null
+        : r.can_push === 1,
   };
 }

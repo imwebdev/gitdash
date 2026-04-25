@@ -14,7 +14,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "clean";
+export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "read-only" | "clean";
 
 export const ROW_GRID =
   "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_104px]";
@@ -24,6 +24,8 @@ function primaryAction(
   hasRemote: boolean,
   hasConflicts: boolean,
 ): { label: string; action: string | null } {
+  // read-only repos never show an action button — gitdash can't push there.
+  if (kind === "read-only") return { label: "", action: null };
   if (kind === "push") return { label: "Push", action: "push" };
   if (kind === "pull") return { label: "Pull", action: "pull" };
   if (kind === "diverged") return { label: "Merge", action: "merge" };

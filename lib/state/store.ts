@@ -18,6 +18,7 @@ export type DerivedState =
   | "behind"
   | "diverged"
   | "dirty"
+  | "read-only"
   | "no-upstream"
   | "weird"
   | "unknown";
@@ -29,6 +30,11 @@ export function deriveState(row: RepoRow, snap: SnapshotRow | null): DerivedStat
   if (snap.stagedDeletions > 500) return "weird";
   const dirty = snap.dirtyTracked + snap.staged + snap.untracked + snap.conflicted;
   if (dirty > 1000) return "weird";
+  // Read-only takes precedence over actionable states (dirty / ahead / etc.)
+  // — gitdash actions can't push to these repos, so showing them in
+  // push/diverged/dirty would be a bait-and-switch. The row stays visible
+  // but gets routed to its own bucket where action buttons are hidden.
+  if (snap.canPush === false) return "read-only";
   if (dirty > 0) return "dirty";
   if (snap.remoteState === "diverged") return "diverged";
   if (snap.remoteState === "ahead" || snap.ahead > 0) return "ahead";

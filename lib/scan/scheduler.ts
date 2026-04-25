@@ -1,7 +1,7 @@
 import pLimit from "p-limit";
 import { discoverRepos, detectWeirdFlags, type DiscoveryConfig, parseGithubSlug } from "./discover";
 import { collectSnapshot } from "@/lib/git/status";
-import { compareWithRemote, fetchOpenPrCount } from "@/lib/gh/client";
+import { compareWithRemote, fetchOpenPrCount, fetchCanPush } from "@/lib/gh/client";
 import {
   upsertDiscoveredRepo,
   upsertSnapshot,
@@ -128,13 +128,15 @@ class Scheduler {
             const slug = parseGithubSlug(snap.remoteUrl);
             let comparison = null;
             let prCount: number | null = null;
+            let canPush: boolean | null = null;
             if (slug && snap.status.headSha && snap.status.branch) {
-              [comparison, prCount] = await Promise.all([
+              [comparison, prCount, canPush] = await Promise.all([
                 compareWithRemote(slug, snap.status.headSha, snap.status.branch),
                 fetchOpenPrCount(slug),
+                fetchCanPush(slug),
               ]);
             }
-            upsertSnapshot(row.id, snap, comparison, weirdFlags, Date.now(), prCount);
+            upsertSnapshot(row.id, snap, comparison, weirdFlags, Date.now(), prCount, canPush);
             getStore().emitUpdate(row.id);
           } catch (err) {
             console.error(`[scheduler] remote tick failed for ${row.repoPath}`, err);

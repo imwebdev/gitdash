@@ -61,7 +61,8 @@ function migrate(db: Database.Database): void {
       open_pr_count      INTEGER NOT NULL DEFAULT 0,
       weird_flags        TEXT NOT NULL DEFAULT '[]',
       collected_at       INTEGER NOT NULL,
-      remote_checked_at  INTEGER
+      remote_checked_at  INTEGER,
+      can_push           INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS gh_etag_cache (
@@ -82,6 +83,24 @@ function migrate(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_actions_repo ON actions_log(repo_id, started_at DESC);
   `);
+
+  // Idempotent column-add migrations. SQLite has no IF NOT EXISTS on ADD
+  // COLUMN, so we probe table_info first. New columns must be NULL-able
+  // (which is fine for our additive use cases — derivation handles nulls).
+  ensureColumn(db, "snapshots", "can_push", "INTEGER");
+}
+
+function ensureColumn(
+  db: Database.Database,
+  table: string,
+  column: string,
+  type: string,
+): void {
+  const cols = db
+    .prepare<[], { name: string }>(`PRAGMA table_info(${table})`)
+    .all();
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
 export function closeDb(): void {
