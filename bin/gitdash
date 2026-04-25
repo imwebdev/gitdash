@@ -68,6 +68,17 @@ if [[ "$MODE" == "mark-reviewed" ]]; then
   exec "$TSX" "$DIR/scripts/mark-reviewed.ts" "$@"
 fi
 
+# install-hook subcommand: installs/removes the Claude Code SessionStart hook.
+if [[ "$MODE" == "install-hook" ]]; then
+  shift
+  TSX="$DIR/node_modules/.bin/tsx"
+  if [[ ! -x "$TSX" ]]; then
+    echo "[gitdash] tsx not found — run \`npm install\` in $DIR" >&2
+    exit 1
+  fi
+  exec "$TSX" "$DIR/scripts/install-hook.ts" "$@"
+fi
+
 if [[ ! -d "$DIR/.next" && "$MODE" == "start" ]]; then
   echo "[gitdash] no build found — running \`npm run build\` first"
   npm run build
@@ -97,5 +108,5 @@ fi
 case "$MODE" in
   start) exec "$NEXT" start -H "$BIND" -p "$PORT" ;;
   dev)   exec "$NEXT" dev   -H "$BIND" -p "$PORT" ;;
-  *)     echo "usage: gitdash [start|dev|status|mark-reviewed [--cwd <path>]]" >&2; exit 1 ;;
+  *)     echo "usage: gitdash [start|dev|status [--cwd <path>]|mark-reviewed [--cwd <path>]|install-hook [--user|--project] [--dry-run] [--uninstall]]" >&2; exit 1 ;;
 esac
