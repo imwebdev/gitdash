@@ -128,9 +128,21 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
           )}
         >
           <div className="flex min-w-0 flex-col">
-            <h3 className="truncate text-[14px] font-medium tracking-tight text-fg">
-              {repo.displayName}
-            </h3>
+            <div className="flex min-w-0 items-center gap-1">
+              <h3 className="truncate text-[14px] font-medium tracking-tight text-fg">
+                {repo.displayName}
+              </h3>
+              {snap?.remoteState === "unknown" &&
+                (snap.remoteCheckedAt === null || Date.now() - snap.remoteCheckedAt > 5 * 60 * 1000) && (
+                  <span
+                    className="shrink-0 text-[11px] text-accent-attention"
+                    title="Remote check is stuck. Possible causes: branch removed on GitHub, auth expired, repo renamed/deleted. Click refresh to retry."
+                    aria-label="Remote check is stuck"
+                  >
+                    ⚠
+                  </span>
+                )}
+            </div>
             <span className="mono truncate text-[11px] text-fg-dim">
               {snap?.detached ? "(detached HEAD)" : snap?.branch ?? "—"}
             </span>
@@ -163,6 +175,7 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
             repoId={repo.id}
             csrfToken={csrfToken}
             expanded={expanded}
+            snap={snap}
           />
         </div>
 
@@ -182,6 +195,7 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
               repoId={repo.id}
               csrfToken={csrfToken}
               expanded={expanded}
+              snap={snap}
             />
           </div>
 
@@ -409,59 +423,95 @@ function RowIcons({
   repoId,
   csrfToken,
   expanded,
+  snap,
 }: {
   ghUrl: string | null;
   repoId: number;
   csrfToken: string;
   expanded: boolean;
+  snap: import("@/lib/db/repos").SnapshotRow | null;
 }) {
-  const [refreshState, setRefreshState] = useState<"idle" | "spinning" | "error">("idle");
+  const [refreshState, setRefreshState] = useState<"idle" | "spinning" | "error" | "rate-limited">("idle");
+
+  const remoteCheckedAt = snap?.remoteCheckedAt ?? null;
+  const remoteState = snap?.remoteState ?? null;
+
+  // True when remote check is "unknown" and hasn't succeeded in the last 5 min.
+  const isStuck =
+    remoteState === "unknown" &&
+    (remoteCheckedAt === null || Date.now() - remoteCheckedAt > 5 * 60 * 1000);
+
+  function buildTooltip(): string {
+    if (refreshState === "error") return "Refresh failed — see server logs";
+    if (refreshState === "rate-limited") return "Checked recently — please wait a moment";
+
+    let tip =
+      remoteCheckedAt != null
+        ? `Last remote check: ${relativeTime(remoteCheckedAt / 1000)}`
+        : "Remote not yet checked";
+
+    if (isStuck) {
+      tip +=
+        " · check has been failing\nPossible causes: branch removed on GitHub, auth expired, repo renamed/deleted.";
+    }
+    return tip;
+  }
 
   const onRefresh = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (refreshState === "spinning") return;
+    if (refreshState === "spinning" || refreshState === "rate-limited") return;
     setRefreshState("spinning");
     try {
-      const res = await fetch(`/api/repos/${repoId}/refresh`, {
+      const res = await fetch(`/api/repos/${repoId}/refresh-remote`, {
         method: "POST",
         headers: { "x-csrf-token": csrfToken },
       });
-      if (!res.ok) {
+      if (res.status === 429) {
+        setRefreshState("rate-limited");
+        setTimeout(() => setRefreshState("idle"), 5_000);
+      } else if (!res.ok) {
         setRefreshState("error");
-        setTimeout(() => setRefreshState("idle"), 1500);
+        setTimeout(() => setRefreshState("idle"), 2_000);
       } else {
         setRefreshState("idle");
       }
     } catch {
       setRefreshState("error");
-      setTimeout(() => setRefreshState("idle"), 1500);
+      setTimeout(() => setRefreshState("idle"), 2_000);
     }
   };
 
   return (
     <div className="flex items-center justify-end gap-0.5 sm:gap-1">
-      <button
-        type="button"
-        onClick={onRefresh}
-        title={
-          refreshState === "error"
-            ? "Refresh failed — see server logs"
-            : "Re-check this repo against GitHub"
-        }
-        aria-label="Refresh"
-        disabled={refreshState === "spinning"}
-        className={cn(
-          "inline-flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-7 sm:w-7",
-          refreshState === "error"
-            ? "text-accent-attention"
-            : "text-fg-dim hover:bg-bg-hover hover:text-fg",
-          refreshState === "spinning" && "cursor-wait",
+      <div className="relative flex items-center">
+        {isStuck && refreshState === "idle" && (
+          <span
+            className="absolute -left-4 text-[11px] text-accent-attention"
+            title="Remote check is stuck. Click refresh to retry."
+            aria-label="Remote check is stuck"
+          >
+            ⚠
+          </span>
         )}
-      >
-        <RefreshCw
-          className={cn("h-3.5 w-3.5", refreshState === "spinning" && "animate-spin")}
-        />
-      </button>
+        <button
+          type="button"
+          onClick={onRefresh}
+          title={buildTooltip()}
+          aria-label="Refresh remote state"
+          disabled={refreshState === "spinning" || refreshState === "rate-limited"}
+          className={cn(
+            "inline-flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-7 sm:w-7",
+            refreshState === "error" && "text-accent-attention",
+            refreshState === "rate-limited" && "text-fg-dim opacity-50 cursor-not-allowed",
+            refreshState === "idle" && "text-fg-dim hover:bg-bg-hover hover:text-fg",
+            refreshState === "spinning" && "cursor-wait text-fg-dim",
+          )}
+        >
+          <RefreshCw
+            className={cn("h-3.5 w-3.5", refreshState === "spinning" && "animate-spin")}
+          />
+        </button>
+      </div>
       {ghUrl ? (
         <a
           href={ghUrl}
