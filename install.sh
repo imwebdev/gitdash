@@ -106,11 +106,35 @@ npm run build
 # ─────────────────────────────────────────────────────────
 step "4/6 Configuration"
 mkdir -p "$CONFIG_DIR"
+
+# Pin the node that built the native modules (e.g. better-sqlite3) so the
+# systemd service uses the same node binary at runtime — otherwise systemd's
+# minimal PATH (/usr/bin:/bin) picks up a system node with a mismatched
+# NODE_MODULE_VERSION and the .node files fail to load (ERR_DLOPEN_FAILED).
+#
+# Also include $HOME/.local/bin so `gh` (typically installed there) is
+# reachable from the service — without this the clone-section returns 502
+# with `spawn gh ENOENT` even though `gh` is happy from an interactive shell.
+NODE_DIR="$(dirname "$(command -v node 2>/dev/null || echo /usr/bin/node)")"
+SERVICE_PATH="$NODE_DIR:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Always rewrite the env file so PATH stays current with the install-time
+# node — but preserve the existing CSRF token (rotating it would break any
+# already-loaded browser tab).
 if [[ -f "$ENV_FILE" ]]; then
-  dim "  Config exists at $ENV_FILE — keeping existing CSRF token"
+  EXISTING_CSRF="$(grep -E '^GITDASH_CSRF_TOKEN=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+  if [[ -n "$EXISTING_CSRF" ]]; then
+    CSRF_TOKEN="$EXISTING_CSRF"
+    dim "  Config exists at $ENV_FILE — keeping CSRF token, refreshing PATH"
+  else
+    CSRF_TOKEN=$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')
+    dim "  Config exists at $ENV_FILE — generating CSRF token, refreshing PATH"
+  fi
 else
   CSRF_TOKEN=$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')
-  cat > "$ENV_FILE" <<EOF
+fi
+
+cat > "$ENV_FILE" <<EOF
 # gitdash environment — sourced by the systemd service.
 # Edit values below to override defaults. Restart the service after changes:
 #   systemctl --user restart gitdash
@@ -121,10 +145,15 @@ GITDASH_BIND=0.0.0.0
 # GITDASH_EDITOR=code
 # GITDASH_TERMINAL=x-terminal-emulator
 # GITDASH_DB=$HOME/.local/state/gitdash/gitdash.sqlite
+
+# Pin the node used at install time — prevents better-sqlite3 /
+# NODE_MODULE_VERSION mismatch when systemd's minimal PATH would
+# otherwise pick up an older apt-installed node. Also adds
+# \$HOME/.local/bin so gh (and other user-installed CLIs) resolve.
+PATH=$SERVICE_PATH
 EOF
-  chmod 600 "$ENV_FILE"
-  green "  Wrote $ENV_FILE (mode 600)"
-fi
+chmod 600 "$ENV_FILE"
+green "  Wrote $ENV_FILE (mode 600; PATH pinned to $NODE_DIR)"
 
 # ─────────────────────────────────────────────────────────
 step "5/6 Installing systemd user service"
