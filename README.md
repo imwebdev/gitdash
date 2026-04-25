@@ -75,9 +75,9 @@ iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-
 
 That's it. The script handles everything:
 
-1. If WSL (the Linux layer Windows uses) isn't installed, it installs it for you — it will ask Windows for admin permission (click **Yes** on the UAC prompt), run `wsl --install`, and tell you to reboot.
-2. After you reboot and Ubuntu is set up (it asks for a Linux username + password the first time), **paste the same PowerShell command again**. It will detect WSL is ready and install gitdash.
-3. When it's done, open a new PowerShell window, type `wsl`, then type `gitdash start`, and open http://127.0.0.1:7420 in any Windows browser.
+1. **First run** — If WSL (the Linux layer Windows uses) isn't installed, the script installs it: Windows will ask for admin permission (click **Yes** on the UAC prompt), then `wsl --install` runs and tells you to reboot.
+2. **After the reboot** — Paste the **same** PowerShell command again. The script then installs Ubuntu, opens an Ubuntu window so you can set your Linux username + password, and **continues installing gitdash automatically** as soon as Ubuntu is ready. No further pastes required.
+3. **When it's done** — open a new PowerShell window, type `wsl`, then type `gitdash start`, and open http://127.0.0.1:7420 in any Windows browser.
 
 ### Common errors you can ignore now
 

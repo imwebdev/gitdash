@@ -6,8 +6,10 @@
 # What it does (idempotent):
 #   1. Checks whether WSL 2 is installed
 #   2. If not, installs WSL 2 (relaunches as admin if needed) and asks you to reboot
-#   3. If WSL 2 and a distro are ready, runs the Linux quick-install.sh inside WSL
-#   4. Leaves you with a `gitdash` command inside WSL
+#   3. If WSL is installed but no Linux distro: installs Ubuntu, waits for the user
+#      to finish setting their Linux username/password, then auto-continues
+#   4. Runs the Linux quick-install.sh inside WSL
+#   5. Leaves you with a `gitdash` command inside WSL
 
 $ErrorActionPreference = 'Stop'
 
@@ -123,12 +125,37 @@ if ($rawList) {
 if (-not $distros -or $distros.Count -eq 0) {
     Write-Warn "WSL is installed but no Linux distro is set up yet"
     Write-Host ""
-    Write-Host "Installing Ubuntu. When the Ubuntu window opens it will ask you for"
-    Write-Host "a Linux username + password - set them, wait for its prompt, close the"
-    Write-Host "Ubuntu window, then run this gitdash install command again."
+    Write-Host "An Ubuntu window will open. It will ask you to set a Linux username + password."
+    Write-Host "Once you see the Ubuntu prompt (e.g. 'you@host:~`$'), come back to THIS window."
+    Write-Host "gitdash will continue installing here automatically - you do NOT need to re-run anything."
     Write-Host ""
+
     wsl --install -d Ubuntu
-    exit 0
+
+    Write-Step "Waiting for Ubuntu to finish provisioning"
+    Write-Host "   (Polling every few seconds. Just finish setting your Ubuntu username + password.)"
+
+    $deadline = (Get-Date).AddMinutes(15)
+    $ready = $false
+    while ((Get-Date) -lt $deadline) {
+        wsl -d Ubuntu -- true 2>$null
+        if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+        Start-Sleep -Seconds 3
+    }
+
+    if (-not $ready) {
+        Write-Host ""
+        Write-Warn "Ubuntu did not become reachable within 15 minutes."
+        Write-Host ""
+        Write-Host "Once you have set your Ubuntu username + password and you see its prompt,"
+        Write-Host "come back to PowerShell and paste this exact command:"
+        Write-Host ""
+        Write-Host "  iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-install.ps1 | iex" -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+
+    $distros = @('Ubuntu')
 }
 
 Write-Ok ("Found: {0}" -f ($distros -join ', '))
