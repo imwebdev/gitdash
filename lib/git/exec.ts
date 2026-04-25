@@ -25,6 +25,7 @@ const MUTATING_GIT_SUBCOMMANDS = new Set([
   "fetch",
   "merge",
   "stash",
+  "rebase",
 ]);
 
 export type GitRunMode = "read" | "mutate";
