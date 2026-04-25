@@ -231,10 +231,6 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
         </div>
       </header>
 
-      <div className="mb-5">
-        <RemoteReposSection csrfToken={csrfToken} refreshKey={repos.length} />
-      </div>
-
       {groups.length === 0 ? (
         <EmptyState hasRepos={repos.length > 0} />
       ) : (
@@ -256,6 +252,10 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
           ))}
         </div>
       )}
+
+      <div className="mt-5">
+        <RemoteReposSection csrfToken={csrfToken} refreshKey={repos.length} />
+      </div>
 
       <footer className="mt-16 flex items-center justify-between border-t border-border-subtle pt-6 text-[12px] text-fg-dim">
         <span>{repos.length} tracked</span>
