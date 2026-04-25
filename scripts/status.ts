@@ -151,9 +151,9 @@ try {
     diverged:     `⇅ gitdash: ${ahead} ahead, ${behind} behind · ${branch}`,
     dirty:        `✗ gitdash: ${dirty} uncommitted change(s) · ${branch}`,
     "read-only":  `✓ gitdash: read-only · ${branch}`,
-    "no-upstream":`⚠ gitdash: no upstream · ${branch}`,
+    "no-upstream":`ⓘ gitdash: local-only · ${branch}`,
     weird:        `⚠ gitdash: needs attention · ${branch}`,
-    unknown:      `⚠ gitdash: needs attention · ${branch}`,
+    unknown:      `ⓘ gitdash: remote check pending · ${branch}`,
   };
 
   process.stdout.write(lines[state] + "\n");
