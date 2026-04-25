@@ -40,7 +40,7 @@ export async function POST(
 
   let commitMessage: string | undefined;
   let publish: PublishOptions | undefined;
-  if (name === "commit-push") {
+  if (name === "commit-push" || name === "commit") {
     try {
       const body = (await req.json()) as { commitMessage?: unknown };
       if (typeof body.commitMessage === "string") {

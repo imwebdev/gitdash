@@ -48,23 +48,39 @@ export type GroupKind =
   | "clean";
 
 export const ROW_GRID =
-  "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_104px]";
+  "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_220px_104px]";
 
-function primaryAction(
+interface ActionButton {
+  label: string;
+  action: string;
+  variant: "primary" | "secondary";
+}
+
+// Returns 0, 1, or 2 buttons. Dirty rows with a remote get two side by side
+// (Commit + Commit & push) so a failed push doesn't force the user to retype
+// their commit message — they just hit Push afterward.
+function primaryActions(
   kind: GroupKind,
   hasRemote: boolean,
   hasConflicts: boolean,
-): { label: string; action: string | null } {
-  // read-only repos never show an action button — gitdash can't push there.
-  if (kind === "read-only") return { label: "", action: null };
-  if (kind === "push") return { label: "Push", action: "push" };
-  if (kind === "pull") return { label: "Pull", action: "pull" };
-  if (kind === "diverged") return { label: "Merge", action: "merge" };
-  if (kind === "dirty" && !hasConflicts && hasRemote) {
-    return { label: "Commit & push", action: "commit-push" };
+): ActionButton[] {
+  if (kind === "read-only") return [];
+  if (kind === "push") return [{ label: "Push", action: "push", variant: "primary" }];
+  if (kind === "pull") return [{ label: "Pull", action: "pull", variant: "primary" }];
+  if (kind === "diverged") return [{ label: "Merge", action: "merge", variant: "primary" }];
+  if (kind === "dirty" && !hasConflicts) {
+    if (hasRemote) {
+      return [
+        { label: "Commit", action: "commit", variant: "secondary" },
+        { label: "Commit & push", action: "commit-push", variant: "primary" },
+      ];
+    }
+    return [{ label: "Commit", action: "commit", variant: "primary" }];
   }
-  if (kind === "local-only") return { label: "Publish to GitHub", action: "publish-to-github" };
-  return { label: "", action: null };
+  if (kind === "local-only") {
+    return [{ label: "Publish to GitHub", action: "publish-to-github", variant: "primary" }];
+  }
+  return [];
 }
 
 function relativeTime(unix: number | null | undefined): string {
@@ -78,7 +94,16 @@ function relativeTime(unix: number | null | undefined): string {
   return `${Math.floor(deltaSec / (86400 * 365))}y ago`;
 }
 
-function actionButtonClass(kind: GroupKind): string {
+function actionButtonClass(kind: GroupKind, variant: "primary" | "secondary"): string {
+  // Secondary variant is a quieter, outline-only style so two side-by-side
+  // buttons in the dirty row create a visual primary/secondary hierarchy
+  // (Commit & push wins; Commit is available but recedes).
+  if (variant === "secondary") {
+    return cn(
+      "shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-[12px] font-medium tracking-tight transition-all",
+      "border-border bg-transparent text-fg-muted hover:border-fg-muted hover:text-fg",
+    );
+  }
   return cn(
     "shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1 text-[12px] font-medium tracking-tight transition-all",
     kind === "push" &&
@@ -119,7 +144,7 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
   const newFiles = snap?.untracked ?? 0;
   const conflicts = snap?.conflicted ?? 0;
   const hasRemote = !!(ghUrl ?? snap?.remoteUrl);
-  const button = primaryAction(kind, hasRemote, conflicts > 0);
+  const buttons = primaryActions(kind, hasRemote, conflicts > 0);
   const prCount = snap?.openPrCount ?? 0;
 
   const handleRowClick = (e: React.MouseEvent) => {
@@ -190,16 +215,21 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
           />
           <PrCell count={prCount} url={ghPrUrl} />
 
-          {button.action ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setModalAction(button.action);
-              }}
-              className={cn(actionButtonClass(kind), "justify-self-start")}
-            >
-              {button.label}
-            </button>
+          {buttons.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5 justify-self-start">
+              {buttons.map((b) => (
+                <button
+                  key={b.action}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setModalAction(b.action);
+                  }}
+                  className={actionButtonClass(kind, b.variant)}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
           ) : (
             <span />
           )}
@@ -268,16 +298,21 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
             </span>
           </div>
 
-          {button.action && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setModalAction(button.action);
-              }}
-              className={cn(actionButtonClass(kind), "h-11 self-start px-4 text-[13px] sm:h-10")}
-            >
-              {button.label}
-            </button>
+          {buttons.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {buttons.map((b) => (
+                <button
+                  key={b.action}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setModalAction(b.action);
+                  }}
+                  className={cn(actionButtonClass(kind, b.variant), "h-11 px-4 text-[13px] sm:h-10")}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
