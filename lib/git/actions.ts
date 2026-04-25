@@ -17,6 +17,7 @@ export type ActionName =
   | "stash-pop"
   | "open-editor"
   | "open-terminal"
+  | "commit"
   | "commit-push"
   | "publish-to-github";
 
@@ -77,15 +78,15 @@ export function startAction(opts: StartOptions): ActionRun {
   };
   runs.set(runId, run);
 
-  if (opts.action === "commit-push") {
+  if (opts.action === "commit-push" || opts.action === "commit") {
     const message = sanitizeCommitMessage(opts.commitMessage);
+    const pushAfter = opts.action === "commit-push";
     setImmediate(() => {
-      executeCommitPush(run, opts.repoPath, message, opts.branch).catch((err) => {
+      executeCommit(run, opts.repoPath, message, opts.branch, pushAfter).catch((err) => {
         run.emitter.emit("done", { exitCode: -1 });
         run.exitCode = -1;
         run.finishedAt = Date.now();
         recordRunFinish(run);
-        // surface error
         run.lines.push(`[fatal] ${(err as Error).message}`);
       });
     });
@@ -179,6 +180,8 @@ function buildArgs(action: ActionName, branch: string | null): string[] {
       return [];
     case "open-terminal":
       return [];
+    case "commit":
+      return [];
     case "commit-push":
       return [];
     case "publish-to-github":
@@ -219,6 +222,8 @@ function friendlyActionLabel(action: ActionName): string {
       return "Open editor";
     case "open-terminal":
       return "Open terminal";
+    case "commit":
+      return "Commit";
     case "commit-push":
       return "Commit & push";
     case "publish-to-github":
@@ -426,11 +431,12 @@ async function executePush(run: ActionRun, repoPath: string, branch: string | nu
   run.emitter.emit("done", { exitCode: 0 });
 }
 
-async function executeCommitPush(
+async function executeCommit(
   run: ActionRun,
   repoPath: string,
   message: string,
   branch: string | null,
+  pushAfter: boolean,
 ): Promise<void> {
   const emit = (text: string) => {
     run.lines.push(text);
@@ -453,8 +459,9 @@ async function executeCommitPush(
   const commitCode = await spawnGitStep(run, emit, ["commit", "-m", message], repoPath);
   if (commitCode !== 0) {
     if (commitCode === 1) {
-      // "nothing to commit" — treat as success, skip push
-      emit("[gitdash] nothing to commit; skipping push");
+      emit(pushAfter
+        ? "[gitdash] nothing to commit; skipping push"
+        : "[gitdash] nothing to commit");
       run.finishedAt = Date.now();
       run.exitCode = 0;
       recordRunFinish(run);
@@ -467,6 +474,15 @@ async function executeCommitPush(
     run.exitCode = commitCode;
     recordRunFinish(run);
     run.emitter.emit("done", { exitCode: commitCode });
+    return;
+  }
+
+  if (!pushAfter) {
+    emit("[gitdash] ✓ Commit created locally. Hit Push when you're ready to upload it to GitHub.");
+    run.finishedAt = Date.now();
+    run.exitCode = 0;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 0 });
     return;
   }
 
@@ -484,6 +500,7 @@ async function executeCommitPush(
   const pushCode = await spawnGitStep(run, emit, ["push"], repoPath);
   if (pushCode !== 0) {
     emit(`[gitdash] ✗ ${friendlyStepLabel("push")} didn't complete (exit ${pushCode}).`);
+    emit("[gitdash] hint: Your commit was saved locally. Once you fix the push issue (often a GitHub auth problem), click the Push button on this row to retry.");
     emitHint(emit, run.lines);
     run.finishedAt = Date.now();
     run.exitCode = pushCode;
@@ -695,6 +712,7 @@ const VALID_ACTIONS: ReadonlySet<string> = new Set([
   "stash-pop",
   "open-editor",
   "open-terminal",
+  "commit",
   "commit-push",
   "publish-to-github",
 ]);

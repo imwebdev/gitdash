@@ -29,6 +29,7 @@ const COPY: Record<string, { verb: string; confirm?: string }> = {
     confirm:
       "This will combine GitHub's new commits with yours, creating a merge commit. Conflicts (if any) will be left in your working tree for you to resolve.",
   },
+  commit: { verb: "Saving a commit locally" },
   "commit-push": { verb: "Committing and pushing to GitHub" },
   "publish-to-github": { verb: "Publishing this repo to GitHub" },
   "open-editor": { verb: "Opening in your editor" },
@@ -54,10 +55,12 @@ interface ChangesResponse {
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const snap = repo.snapshot;
   const pushCount = snap?.remoteAhead ?? snap?.ahead ?? 0;
+  const isCommit = action === "commit";
   const isCommitPush = action === "commit-push";
+  const isCommitFlow = isCommit || isCommitPush;
   const isPublish = action === "publish-to-github";
   const needsConfirm =
-    isCommitPush ||
+    isCommitFlow ||
     isPublish ||
     action === "merge" ||
     (action === "push" && pushCount > DESTRUCTIVE_CONFIRMATION_LIMIT);
@@ -70,7 +73,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const [publishVisibility, setPublishVisibility] = useState<"private" | "public">("private");
   const [publishDescription, setPublishDescription] = useState<string>("");
   const [changes, setChanges] = useState<ChangesResponse | null>(null);
-  const [changesLoading, setChangesLoading] = useState(isCommitPush);
+  const [changesLoading, setChangesLoading] = useState(isCommitFlow);
   const [mounted, setMounted] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -153,9 +156,9 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     };
   }, [mounted]);
 
-  // Fetch changes preview when entering commit-push confirm
+  // Fetch changes preview when entering any commit-flow confirm
   useEffect(() => {
-    if (!isCommitPush || phase !== "confirm") return;
+    if (!isCommitFlow || phase !== "confirm") return;
     let cancelled = false;
     (async () => {
       try {
@@ -172,7 +175,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isCommitPush, phase, repo.id]);
+  }, [isCommitFlow, phase, repo.id]);
 
   useEffect(() => {
     if (phase !== "running") return;
@@ -181,7 +184,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     async function run() {
       try {
         let body: Record<string, unknown> = {};
-        if (isCommitPush) {
+        if (isCommitFlow) {
           body = { commitMessage: commitMessage.trim() };
         } else if (isPublish) {
           body = {
@@ -239,7 +242,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     action,
     repo.id,
     csrfToken,
-    isCommitPush,
+    isCommitFlow,
     isPublish,
     commitMessage,
     publishName,
@@ -287,8 +290,9 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           </button>
         </header>
 
-        {phase === "confirm" && isCommitPush && (
+        {phase === "confirm" && isCommitFlow && (
           <CommitPushConfirm
+            pushAfter={isCommitPush}
             changes={changes}
             loading={changesLoading}
             commitMessage={commitMessage}
@@ -311,7 +315,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           />
         )}
 
-        {phase === "confirm" && !isCommitPush && !isPublish && (
+        {phase === "confirm" && !isCommitFlow && !isPublish && (
           <div className="flex flex-col gap-4 px-6 py-6">
             <p className="text-[14px] leading-relaxed text-fg-muted">
               {action === "merge"
@@ -377,6 +381,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
 }
 
 function CommitPushConfirm({
+  pushAfter,
   changes,
   loading,
   commitMessage,
@@ -384,6 +389,7 @@ function CommitPushConfirm({
   onCancel,
   onConfirm,
 }: {
+  pushAfter: boolean;
   changes: ChangesResponse | null;
   loading: boolean;
   commitMessage: string;
@@ -393,6 +399,7 @@ function CommitPushConfirm({
 }) {
   const total = changes?.total ?? 0;
   const suspicious = changes?.suspicious ?? [];
+  const submitLabel = pushAfter ? "Commit & push" : "Commit";
 
   return (
     <div className="flex flex-col gap-5 overflow-y-auto px-6 py-6">
@@ -411,8 +418,13 @@ function CommitPushConfirm({
           <div>
             <p className="text-[14px] text-fg">
               <span className="display-italic text-fg">{total}</span>{" "}
-              file{total === 1 ? "" : "s"} will be committed and pushed to GitHub.
+              file{total === 1 ? "" : "s"} will be {pushAfter ? "committed and pushed to GitHub" : "saved as a commit on this computer"}.
             </p>
+            {!pushAfter && (
+              <p className="mt-1 text-[12px] text-fg-dim">
+                Nothing leaves your machine. Hit Push afterwards to upload to GitHub.
+              </p>
+            )}
             {changes.truncated && (
               <p className="mt-1 text-[11px] text-fg-dim">(showing first 500 — repo has more)</p>
             )}
@@ -439,9 +451,11 @@ function CommitPushConfirm({
                     </li>
                   ))}
                 </ul>
-                <p className="mt-2 text-[11.5px] text-fg-dim">
-                  These will be pushed to GitHub publicly if your repo is public. Make sure that's what you want.
-                </p>
+                {pushAfter && (
+                  <p className="mt-2 text-[11.5px] text-fg-dim">
+                    These will be pushed to GitHub publicly if your repo is public. Make sure that's what you want.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -459,7 +473,7 @@ function CommitPushConfirm({
           className="rounded-lg border border-border bg-bg/60 px-3.5 py-2 text-[13.5px] text-fg placeholder:text-fg-dim focus:border-ring focus:outline-none"
         />
         <span className="text-[11px] text-fg-dim">
-          Leave blank to use the default. This is what shows up in your GitHub commit history.
+          Leave blank to use the default. This is what shows up in your {pushAfter ? "GitHub" : "local"} commit history.
         </span>
       </label>
 
@@ -479,7 +493,7 @@ function CommitPushConfirm({
             "disabled:cursor-not-allowed disabled:opacity-40",
           )}
         >
-          Commit &amp; push
+          {submitLabel}
         </button>
       </div>
     </div>
