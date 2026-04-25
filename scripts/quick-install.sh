@@ -328,6 +328,9 @@ build_gitdash() {
   fi
 
   step "Building"
+  # Clean any prior build artifacts so env vars + chunks always come from
+  # the current source tree (avoids stale .next on update re-runs).
+  (cd "$INSTALL_DIR" && rm -rf .next)
   (cd "$INSTALL_DIR" && npm run build --silent)
   ok "build complete"
 }

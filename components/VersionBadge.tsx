@@ -34,7 +34,7 @@ export function VersionBadge() {
       title={builtAtTooltip || "Click to copy version"}
       className={cn(
         "fixed bottom-2 right-2 z-50 select-none rounded-md px-2 py-0.5 text-xs",
-        "text-fg-dim opacity-40 transition-opacity hover:opacity-100",
+        "text-fg-dim opacity-70 transition-opacity hover:opacity-100",
         "font-mono tracking-tight",
       )}
       aria-label="gitdash version"

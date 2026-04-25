@@ -74,6 +74,9 @@ fi
 
 # ─────────────────────────────────────────────────────────
 step "3/6 Building"
+# Clean any prior build artifacts so env vars + chunks always come from
+# the current source tree (avoids stale .next on update re-runs).
+rm -rf .next
 npm run build
 
 # ─────────────────────────────────────────────────────────
