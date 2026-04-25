@@ -123,6 +123,8 @@ export function friendlyStepLabel(label: string): string {
       return "Staging changes";
     case "commit":
       return "Creating commit";
+    case "fetch-rebase":
+      return "Syncing with remote";
     case "push":
       return "Pushing to GitHub";
     default:

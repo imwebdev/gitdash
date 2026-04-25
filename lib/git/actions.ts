@@ -1,9 +1,12 @@
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { assertSafeRef } from "./exec";
 import { translateGitError, friendlyStepLabel } from "./error-hints";
 import { getDb } from "@/lib/db/schema";
+
+const execFileAsync = promisify(execFile);
 
 export type ActionName =
   | "fetch"
@@ -63,12 +66,29 @@ export function startAction(opts: StartOptions): ActionRun {
   if (opts.action === "commit-push") {
     const message = sanitizeCommitMessage(opts.commitMessage);
     setImmediate(() => {
-      executeCommitPush(run, opts.repoPath, message).catch((err) => {
+      executeCommitPush(run, opts.repoPath, message, opts.branch).catch((err) => {
         run.emitter.emit("done", { exitCode: -1 });
         run.exitCode = -1;
         run.finishedAt = Date.now();
         recordRunFinish(run);
         // surface error
+        run.lines.push(`[fatal] ${(err as Error).message}`);
+      });
+    });
+    getDb().prepare(
+      "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
+    ).run(opts.repoId, opts.action, run.startedAt);
+    return run;
+  }
+
+  // push gets special treatment: fetch-rebase first, then the actual push.
+  if (opts.action === "push") {
+    setImmediate(() => {
+      executePush(run, opts.repoPath, opts.branch).catch((err) => {
+        run.emitter.emit("done", { exitCode: -1 });
+        run.exitCode = -1;
+        run.finishedAt = Date.now();
+        recordRunFinish(run);
         run.lines.push(`[fatal] ${(err as Error).message}`);
       });
     });
@@ -176,71 +196,259 @@ function recordRunFinish(run: ActionRun): void {
   }
 }
 
-async function executeCommitPush(run: ActionRun, repoPath: string, message: string): Promise<void> {
+/**
+ * Runs a single git command via spawn (not execFile) so output streams live to
+ * the ActionRun's line emitter.  Returns the exit code.
+ */
+function spawnGitStep(
+  run: ActionRun,
+  emit: (text: string) => void,
+  args: string[],
+  repoPath: string,
+): Promise<number> {
+  return new Promise<number>((resolve) => {
+    emit(`$ git ${args.join(" ")}`);
+    const child = spawn("git", ["-C", repoPath, ...args], {
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "/bin/echo",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    run.child = child;
+    const onData = (chunk: Buffer) => {
+      for (const line of chunk.toString("utf8").split(/\r?\n/)) {
+        if (line.length > 0) emit(line);
+      }
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    const timer = setTimeout(() => {
+      emit("[timeout] SIGTERM");
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 3_000);
+    }, 120_000);
+    child.on("close", (c) => {
+      clearTimeout(timer);
+      resolve(c ?? -1);
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      emit(`[error] ${err.message}`);
+      resolve(-1);
+    });
+  });
+}
+
+/**
+ * Reads the tracked remote name for the given branch from git config.
+ * Priority: branch.<branch>.pushRemote → branch.<branch>.remote → "origin"
+ * Returns null when the branch or remote cannot be determined (detached HEAD etc.).
+ */
+async function getTrackedRemote(repoPath: string, branch: string | null): Promise<string | null> {
+  if (!branch || branch === "(detached)") return null;
+
+  const tryConfig = async (key: string): Promise<string | null> => {
+    try {
+      const result = await execFileAsync("git", ["-C", repoPath, "config", "--get", key], {
+        timeout: 5_000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+      return result.stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const pushRemote = await tryConfig(`branch.${branch}.pushRemote`);
+  if (pushRemote) return pushRemote;
+  const remote = await tryConfig(`branch.${branch}.remote`);
+  if (remote) return remote;
+
+  // Check if "origin" even exists before defaulting to it.
+  try {
+    await execFileAsync("git", ["-C", repoPath, "config", "--get", "remote.origin.url"], {
+      timeout: 5_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    return "origin";
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch-rebase step: fetches the tracked remote, counts how many commits the
+ * remote is ahead of HEAD, and (if any) rebases local work on top.
+ *
+ * Returns:
+ *   - true  → step succeeded; caller may proceed to push
+ *   - false → step failed (conflict / unexpected error); action must stop
+ */
+async function executeFetchRebase(
+  run: ActionRun,
+  emit: (text: string) => void,
+  repoPath: string,
+  branch: string | null,
+): Promise<boolean> {
+  emit(`$ [gitdash] fetch-rebase step starting`);
+
+  // --- resolve branch name ---
+  if (!branch || branch === "(detached)") {
+    emit("[gitdash] Detached HEAD — skipping fetch-rebase, proceeding directly to push.");
+    return true;
+  }
+
+  // --- resolve remote ---
+  const remote = await getTrackedRemote(repoPath, branch);
+  if (!remote) {
+    emit("[gitdash] No upstream configured — pushing directly.");
+    return true;
+  }
+
+  // --- fetch (failure is non-fatal) ---
+  const fetchCode = await spawnGitStep(run, emit, ["fetch", remote], repoPath);
+  if (fetchCode !== 0) {
+    emit(`[gitdash] fetch failed (exit ${fetchCode}) — will try push anyway.`);
+    // non-fatal: continue to push
+    return true;
+  }
+
+  // --- count how far remote is ahead ---
+  let remoteAhead = 0;
+  try {
+    const result = await execFileAsync(
+      "git",
+      ["-C", repoPath, "rev-list", "--count", `HEAD..${remote}/${branch}`],
+      { timeout: 10_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+    );
+    remoteAhead = parseInt(result.stdout.trim(), 10) || 0;
+  } catch {
+    // If rev-list fails (e.g. no remote tracking branch yet) skip rebase.
+    emit("[gitdash] Could not determine remote position — skipping rebase.");
+    return true;
+  }
+
+  if (remoteAhead === 0) {
+    emit("[gitdash] remote unchanged, pushing directly.");
+    return true;
+  }
+
+  // --- rebase ---
+  emit(`[gitdash] Remote moved by ${remoteAhead} commit(s) — rebasing local work on top.`);
+  const rebaseCode = await spawnGitStep(run, emit, ["rebase", `${remote}/${branch}`], repoPath);
+
+  if (rebaseCode === 0) {
+    return true;
+  }
+
+  // --- rebase failed: clean up and propagate failure ---
+  emit(`[gitdash] ✗ ${friendlyStepLabel("fetch-rebase")} didn't complete (exit ${rebaseCode}).`);
+  // Always abort to leave repo in clean state.
+  await spawnGitStep(run, emit, ["rebase", "--abort"], repoPath);
+  emit("[gitdash] ✗ Rebase had conflicts — repo restored to pre-pull state.");
+  emitHint(emit, run.lines);
+  return false;
+}
+
+/** Standalone push action: fetch-rebase → push. */
+async function executePush(run: ActionRun, repoPath: string, branch: string | null): Promise<void> {
   const emit = (text: string) => {
     run.lines.push(text);
     run.emitter.emit("line", text);
   };
 
-  const steps: { label: string; args: string[] }[] = [
-    { label: "stage", args: ["add", "-A"] },
-    { label: "commit", args: ["commit", "-m", message] },
-    { label: "push", args: ["push"] },
-  ];
+  const ok = await executeFetchRebase(run, emit, repoPath, branch);
+  if (!ok) {
+    run.finishedAt = Date.now();
+    run.exitCode = 1;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 1 });
+    return;
+  }
 
-  for (const step of steps) {
-    emit(`$ git ${step.args.join(" ")}`);
-    const code = await new Promise<number>((resolve) => {
-      const child = spawn("git", ["-C", repoPath, ...step.args], {
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_ASKPASS: "/bin/echo",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      run.child = child;
-      const onData = (chunk: Buffer) => {
-        for (const line of chunk.toString("utf8").split(/\r?\n/)) {
-          if (line.length > 0) emit(line);
-        }
-      };
-      child.stdout?.on("data", onData);
-      child.stderr?.on("data", onData);
-      const timer = setTimeout(() => {
-        emit("[timeout] SIGTERM");
-        child.kill("SIGTERM");
-        setTimeout(() => child.kill("SIGKILL"), 3_000);
-      }, 120_000);
-      child.on("close", (c) => {
-        clearTimeout(timer);
-        resolve(c ?? -1);
-      });
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        emit(`[error] ${err.message}`);
-        resolve(-1);
-      });
-    });
+  const pushCode = await spawnGitStep(run, emit, ["push"], repoPath);
+  if (pushCode !== 0) {
+    emit(`[gitdash] ✗ ${friendlyStepLabel("push")} didn't complete (exit ${pushCode}).`);
+    emitHint(emit, run.lines);
+    run.finishedAt = Date.now();
+    run.exitCode = pushCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: pushCode });
+    return;
+  }
 
-    if (code !== 0) {
-      if (step.label === "commit" && code === 1) {
-        // "nothing to commit" — treat as success, skip push
-        emit("[gitdash] nothing to commit; skipping push");
-        run.finishedAt = Date.now();
-        run.exitCode = 0;
-        recordRunFinish(run);
-        run.emitter.emit("done", { exitCode: 0 });
-        return;
-      }
-      emit(`[gitdash] ✗ ${friendlyStepLabel(step.label)} didn't complete (exit ${code}).`);
-      emitHint(emit, run.lines);
+  run.finishedAt = Date.now();
+  run.exitCode = 0;
+  recordRunFinish(run);
+  run.emitter.emit("done", { exitCode: 0 });
+}
+
+async function executeCommitPush(
+  run: ActionRun,
+  repoPath: string,
+  message: string,
+  branch: string | null,
+): Promise<void> {
+  const emit = (text: string) => {
+    run.lines.push(text);
+    run.emitter.emit("line", text);
+  };
+
+  // --- stage ---
+  const stageCode = await spawnGitStep(run, emit, ["add", "-A"], repoPath);
+  if (stageCode !== 0) {
+    emit(`[gitdash] ✗ ${friendlyStepLabel("stage")} didn't complete (exit ${stageCode}).`);
+    emitHint(emit, run.lines);
+    run.finishedAt = Date.now();
+    run.exitCode = stageCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: stageCode });
+    return;
+  }
+
+  // --- commit ---
+  const commitCode = await spawnGitStep(run, emit, ["commit", "-m", message], repoPath);
+  if (commitCode !== 0) {
+    if (commitCode === 1) {
+      // "nothing to commit" — treat as success, skip push
+      emit("[gitdash] nothing to commit; skipping push");
       run.finishedAt = Date.now();
-      run.exitCode = code;
+      run.exitCode = 0;
       recordRunFinish(run);
-      run.emitter.emit("done", { exitCode: code });
+      run.emitter.emit("done", { exitCode: 0 });
       return;
     }
+    emit(`[gitdash] ✗ ${friendlyStepLabel("commit")} didn't complete (exit ${commitCode}).`);
+    emitHint(emit, run.lines);
+    run.finishedAt = Date.now();
+    run.exitCode = commitCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: commitCode });
+    return;
+  }
+
+  // --- fetch-rebase (between commit and push) ---
+  const rebaseOk = await executeFetchRebase(run, emit, repoPath, branch);
+  if (!rebaseOk) {
+    run.finishedAt = Date.now();
+    run.exitCode = 1;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 1 });
+    return;
+  }
+
+  // --- push ---
+  const pushCode = await spawnGitStep(run, emit, ["push"], repoPath);
+  if (pushCode !== 0) {
+    emit(`[gitdash] ✗ ${friendlyStepLabel("push")} didn't complete (exit ${pushCode}).`);
+    emitHint(emit, run.lines);
+    run.finishedAt = Date.now();
+    run.exitCode = pushCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: pushCode });
+    return;
   }
 
   run.finishedAt = Date.now();
