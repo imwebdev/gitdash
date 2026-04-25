@@ -6,6 +6,7 @@ import { RepoGroup } from "./RepoGroup";
 import type { GroupKind } from "./RepoCard";
 import { ThemeToggle } from "./ThemeToggle";
 import { RemoteReposSection } from "./RemoteReposSection";
+import { HealthBanner } from "./HealthBanner";
 
 interface Props {
   initialRepos: RepoView[];
@@ -300,6 +301,8 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
           <ThemeToggle />
         </div>
       </header>
+
+      <HealthBanner csrfToken={csrfToken} />
 
       {groups.length === 0 ? (
         <EmptyState hasRepos={repos.length > 0} />
