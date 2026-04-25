@@ -2,7 +2,19 @@ import { runGh } from "@/lib/git/exec";
 import { getDb } from "@/lib/db/schema";
 import type { GitHubSlug } from "@/lib/scan/discover";
 
-export type RemoteState = "clean" | "ahead" | "behind" | "diverged" | "no-upstream" | "unknown";
+export type RemoteState =
+  | "clean"
+  | "ahead"
+  | "behind"
+  | "diverged"
+  | "no-upstream"
+  | "unknown"
+  // Repo itself is missing on GitHub (deleted, renamed, or made private and
+  // we can't see it). User has to update or remove the remote.
+  | "gone"
+  // Repo exists on GitHub but the local branch isn't on it yet. Click Push
+  // and gitdash will publish the branch with --set-upstream.
+  | "unpushed-branch";
 
 export interface RemoteComparison {
   state: RemoteState;
@@ -134,6 +146,35 @@ function parseIncludedResponse(raw: string): { statusCode: number; etag: string 
   return { statusCode, etag, body };
 }
 
+interface RepoMeta {
+  exists: boolean;
+  defaultBranch: string | null;
+}
+
+/**
+ * One-shot probe for repo existence + default branch. Used as a fallback
+ * when the per-branch SHA fetch comes back empty so we can disambiguate
+ * "branch isn't on remote yet" from "the whole repo is gone."
+ */
+async function fetchRepoMeta(slug: GitHubSlug): Promise<RepoMeta> {
+  try {
+    const res = await runGh([
+      "api",
+      "--method",
+      "GET",
+      `repos/${slug.owner}/${slug.name}`,
+    ], { timeoutMs: 15_000 });
+    const parsed = JSON.parse(res.stdout) as { default_branch?: string };
+    return { exists: true, defaultBranch: parsed.default_branch ?? null };
+  } catch (err) {
+    const stderr = (err as { stderr?: string }).stderr ?? "";
+    if (/\b404\b/.test(stderr)) return { exists: false, defaultBranch: null };
+    // 401/403/network — be conservative, assume the repo is fine and we just
+    // had an auth/transport blip.
+    return { exists: true, defaultBranch: null };
+  }
+}
+
 /**
  * Use the GitHub compare endpoint to get ahead/behind directly.
  * Falls back gracefully on auth errors.
@@ -146,6 +187,28 @@ export async function compareWithRemote(
   const now = Date.now();
   const remote = await fetchRemoteSha(slug, branch);
   if (!remote) {
+    // SHA fetch failed — could be the branch isn't on GitHub yet, or the
+    // repo is gone, or auth blip. Probe repo metadata to disambiguate.
+    const meta = await fetchRepoMeta(slug);
+    if (!meta.exists) {
+      return { state: "gone", ahead: 0, behind: 0, remoteSha: null, localSha, checkedAt: now };
+    }
+    if (meta.defaultBranch && meta.defaultBranch !== branch) {
+      // Repo exists. Try the default branch — if THAT works, only the
+      // local branch is missing on remote (unpushed). If even the default
+      // 404s, treat it as ambiguous (unknown).
+      const defaultRemote = await fetchRemoteSha(slug, meta.defaultBranch);
+      if (defaultRemote) {
+        return {
+          state: "unpushed-branch",
+          ahead: 0,
+          behind: 0,
+          remoteSha: null,
+          localSha,
+          checkedAt: now,
+        };
+      }
+    }
     return { state: "unknown", ahead: 0, behind: 0, remoteSha: null, localSha, checkedAt: now };
   }
   if (remote.sha === localSha) {

@@ -21,7 +21,13 @@ export type DerivedState =
   | "read-only"
   | "no-upstream"
   | "weird"
-  | "unknown";
+  | "unknown"
+  // Repo on GitHub is missing (deleted/renamed/private). User needs to fix
+  // the remote URL or remove tracking. Surfaced in attention.
+  | "gone"
+  // Local branch isn't on the remote yet. Push button will publish it
+  // with --set-upstream.
+  | "unpushed-branch";
 
 export function deriveState(row: RepoRow, snap: SnapshotRow | null): DerivedState {
   if (!snap) return "unknown";
@@ -35,10 +41,14 @@ export function deriveState(row: RepoRow, snap: SnapshotRow | null): DerivedStat
   // push/diverged/dirty would be a bait-and-switch. The row stays visible
   // but gets routed to its own bucket where action buttons are hidden.
   if (snap.canPush === false) return "read-only";
+  // 'gone' beats dirty too — local edits don't matter if there's nowhere
+  // to push them. User has to fix the remote first.
+  if (snap.remoteState === "gone") return "gone";
   if (dirty > 0) return "dirty";
   if (snap.remoteState === "diverged") return "diverged";
   if (snap.remoteState === "ahead" || snap.ahead > 0) return "ahead";
   if (snap.remoteState === "behind" || snap.behind > 0) return "behind";
+  if (snap.remoteState === "unpushed-branch") return "unpushed-branch";
   if (!snap.upstream && !snap.remoteState) return "no-upstream";
   if (snap.remoteState === "unknown") return "unknown";
   return "clean";
