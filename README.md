@@ -149,12 +149,47 @@ Any browser tab already open on the dashboard will detect the new version within
 
 ## 🗑️ Remove gitdash
 
+Pick the section for your OS — same idea as install. Each one-liner stops gitdash, removes the launcher, and leaves your source clone in place. Add `--purge` (Linux/macOS) or `$env:GITDASH_PURGE='1'` (Windows) to also wipe the SQLite database + config.
+
+### 🐧 Linux
+
 ```bash
-cd gitdash && ./uninstall.sh           # service only
-cd gitdash && ./uninstall.sh --purge   # also wipe the database
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh) --purge
 ```
 
-The repo files stay where they are — delete them yourself if you want.
+Or if you have the source clone:
+
+```bash
+cd ~/gitdash && ./uninstall.sh           # service only
+cd ~/gitdash && ./uninstall.sh --purge   # also wipe the database
+```
+
+### 🍎 macOS
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh) --purge
+```
+
+Stops any running `gitdash start` process, removes `~/.local/bin/gitdash`, leaves the clone alone.
+
+### 🪟 Windows
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.ps1 | iex
+```
+
+Removes the `gitdash.cmd` shim from `%LOCALAPPDATA%\gitdash`, strips it from your user PATH, and runs the bash uninstaller inside WSL. To also wipe the WSL-side config + database:
+
+```powershell
+$env:GITDASH_PURGE='1'
+iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.ps1 | iex
+```
+
+It does **not** `wsl --unregister Ubuntu` — that would nuke anything else you've put in WSL. If you want the WSL distro itself gone, run that command yourself.
+
+The repo files stay where they are — delete them yourself if you want gitdash entirely off the disk.
 
 ---
 
