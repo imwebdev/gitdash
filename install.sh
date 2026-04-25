@@ -79,8 +79,26 @@ npm run build
 # ─────────────────────────────────────────────────────────
 step "4/6 Configuration"
 mkdir -p "$CONFIG_DIR"
+
+# Pin a PATH for the systemd service so it (a) uses the same Node that just
+# compiled native modules via `npm ci` (better-sqlite3 binds to NODE_MODULE_VERSION)
+# and (b) can find user-installed CLIs like `gh` that live outside system bins.
+# Without this, systemd inherits a clean PATH and may pick up /usr/bin/node
+# (mismatch) or fail to find `gh` (clone feature returns 502). See #82, #66/#67.
+NODE_BIN_DIR="$(dirname "$(command -v node)")"
+SERVICE_PATH="$NODE_BIN_DIR:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 if [[ -f "$ENV_FILE" ]]; then
   dim "  Config exists at $ENV_FILE — keeping existing CSRF token"
+  if ! grep -q '^PATH=' "$ENV_FILE"; then
+    cat >> "$ENV_FILE" <<EOF
+
+# Pinned for the systemd service: same Node native modules were built against,
+# plus ~/.local/bin so user-installed CLIs (gh, etc.) are reachable.
+PATH=$SERVICE_PATH
+EOF
+    green "  Appended PATH= to $ENV_FILE"
+  fi
 else
   CSRF_TOKEN=$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))')
   cat > "$ENV_FILE" <<EOF
@@ -94,6 +112,10 @@ GITDASH_BIND=0.0.0.0
 # GITDASH_EDITOR=code
 # GITDASH_TERMINAL=x-terminal-emulator
 # GITDASH_DB=$HOME/.local/state/gitdash/gitdash.sqlite
+
+# Pinned for the systemd service: same Node native modules were built against,
+# plus ~/.local/bin so user-installed CLIs (gh, etc.) are reachable.
+PATH=$SERVICE_PATH
 EOF
   chmod 600 "$ENV_FILE"
   green "  Wrote $ENV_FILE (mode 600)"
