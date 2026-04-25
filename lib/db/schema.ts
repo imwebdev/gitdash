@@ -88,6 +88,8 @@ function migrate(db: Database.Database): void {
   // COLUMN, so we probe table_info first. New columns must be NULL-able
   // (which is fine for our additive use cases — derivation handles nulls).
   ensureColumn(db, "snapshots", "can_push", "INTEGER");
+  ensureColumn(db, "repos", "last_review_at", "INTEGER");
+  ensureColumn(db, "repos", "reviewed_head_sha", "TEXT");
 }
 
 function ensureColumn(
