@@ -5,6 +5,7 @@ import type { RepoView } from "@/lib/state/store";
 import { RepoGroup } from "./RepoGroup";
 import type { GroupKind } from "./RepoCard";
 import { ThemeToggle } from "./ThemeToggle";
+import { RemoteReposSection } from "./RemoteReposSection";
 
 interface Props {
   initialRepos: RepoView[];
@@ -229,6 +230,10 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
           <ThemeToggle />
         </div>
       </header>
+
+      <div className="mb-5">
+        <RemoteReposSection csrfToken={csrfToken} refreshKey={repos.length} />
+      </div>
 
       {groups.length === 0 ? (
         <EmptyState hasRepos={repos.length > 0} />
