@@ -193,7 +193,7 @@ export function upsertSnapshot(
     remote_behind: remote?.behind ?? null,
     remote_state: remote?.state ?? null,
     remote_sha: remote?.remoteSha ?? null,
-    open_pr_count: openPrCount,
+    open_pr_count: openPrCount ?? 0,
     weird_flags: JSON.stringify(weirdFlags),
     collected_at: now,
     remote_checked_at: remote ? now : null,
