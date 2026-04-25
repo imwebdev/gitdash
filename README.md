@@ -210,25 +210,35 @@ For folder-scan rules and editor/terminal overrides see [`CLAUDE.md`](./CLAUDE.m
 
 ## 🤖 Claude Code SessionStart hook
 
-`gitdash status` prints a one-line repo summary to stdout, making it useful as a Claude Code `SessionStart` hook. When Claude Code opens a project that gitdash tracks, you see the current sync state immediately in the session banner.
+`gitdash status` prints a one-line repo summary to stdout as a Claude Code `SessionStart` hook. When Claude Code opens a project that gitdash tracks, you see the current sync state immediately in the session banner.
 
-Add this to `~/.claude/settings.json`:
+**One-command install:**
+
+```bash
+gitdash install-hook
+```
+
+This writes the hook entry into `~/.claude/settings.json` (user scope, recommended). It backs up the file before modifying, is safe to re-run (idempotent), and merges with any hooks you already have.
+
+Other options:
+
+```bash
+gitdash install-hook --project    # write to .claude/settings.json in the current directory
+gitdash install-hook --dry-run    # preview the JSON that would be written, without touching any file
+gitdash install-hook --uninstall  # remove the gitdash entry cleanly
+```
+
+**Manual alternative** — if you prefer to edit the file yourself, add this entry to `hooks.SessionStart` in `~/.claude/settings.json`:
 
 ```json
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "gitdash status --cwd $CLAUDE_PROJECT_DIR"
-          }
-        ]
-      }
-    ]
-  }
+  "matcher": "*",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "gitdash status --cwd $CLAUDE_PROJECT_DIR"
+    }
+  ]
 }
 ```
 
