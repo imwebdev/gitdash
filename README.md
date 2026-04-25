@@ -208,6 +208,45 @@ For folder-scan rules and editor/terminal overrides see [`CLAUDE.md`](./CLAUDE.m
 
 ---
 
+## 🤖 Claude Code SessionStart hook
+
+`gitdash status` prints a one-line repo summary to stdout, making it useful as a Claude Code `SessionStart` hook. When Claude Code opens a project that gitdash tracks, you see the current sync state immediately in the session banner.
+
+Add this to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gitdash status --cwd $CLAUDE_PROJECT_DIR"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Sample output lines:
+
+```
+✓ gitdash: in sync · main
+↑ gitdash: 3 ahead · main
+↓ gitdash: 2 behind · main
+⇅ gitdash: 3 ahead, 2 behind · main
+✗ gitdash: 4 uncommitted change(s) · feature/my-branch
+⚠ gitdash: no upstream · main
+```
+
+If gitdash hasn't scanned the directory yet, or the path isn't a git repo, the command prints nothing and exits 0 — it never pollutes your session with errors.
+
+---
+
 ## 📜 License
 
 MIT (see `LICENSE` if/when added).
