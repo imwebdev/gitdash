@@ -46,21 +46,31 @@ export interface SchedulerOptions {
   config: DiscoveryConfig;
   rescanIntervalMs?: number;
   remoteIntervalMs?: number;
+  workingTreeIntervalMs?: number;
   localConcurrency?: number;
   remoteConcurrency?: number;
 }
 
 const DEFAULT_RESCAN_INTERVAL = 10 * 60 * 1000;
 const DEFAULT_REMOTE_INTERVAL = 60 * 1000;
+// Backstop poll for working-tree changes the .git/ chokidar watcher can't
+// see (untracked file added, file edited but not staged, etc.). The watcher
+// catches index/HEAD/refs writes immediately; this fills the gap for the
+// "I touched a file in the editor and the dashboard didn't update" complaint
+// without us having to watch the entire working tree (which is noisy on
+// node_modules-heavy repos).
+const DEFAULT_WORKING_TREE_INTERVAL = 60 * 1000;
 
 class Scheduler {
   private config: DiscoveryConfig;
   private rescanIntervalMs: number;
   private remoteIntervalMs: number;
+  private workingTreeIntervalMs: number;
   private localLimit: ReturnType<typeof pLimit>;
   private remoteLimit: ReturnType<typeof pLimit>;
   private rescanTimer: NodeJS.Timeout | null = null;
   private remoteTimer: NodeJS.Timeout | null = null;
+  private workingTreeTimer: NodeJS.Timeout | null = null;
   private started = false;
   private remoteCursor = 0;
 
@@ -68,6 +78,7 @@ class Scheduler {
     this.config = opts.config;
     this.rescanIntervalMs = opts.rescanIntervalMs ?? DEFAULT_RESCAN_INTERVAL;
     this.remoteIntervalMs = opts.remoteIntervalMs ?? DEFAULT_REMOTE_INTERVAL;
+    this.workingTreeIntervalMs = opts.workingTreeIntervalMs ?? DEFAULT_WORKING_TREE_INTERVAL;
     this.localLimit = pLimit(opts.localConcurrency ?? 8);
     this.remoteLimit = pLimit(opts.remoteConcurrency ?? 4);
   }
@@ -83,13 +94,18 @@ class Scheduler {
     this.remoteTimer = setInterval(() => {
       this.tickRemote().catch((e) => console.error("[scheduler] remote tick failed", e));
     }, Math.max(5000, Math.floor(this.remoteIntervalMs / 4)));
+    this.workingTreeTimer = setInterval(() => {
+      this.collectAllLocal().catch((e) => console.error("[scheduler] working-tree poll failed", e));
+    }, this.workingTreeIntervalMs);
   }
 
   stop(): void {
     if (this.rescanTimer) clearInterval(this.rescanTimer);
     if (this.remoteTimer) clearInterval(this.remoteTimer);
+    if (this.workingTreeTimer) clearInterval(this.workingTreeTimer);
     this.rescanTimer = null;
     this.remoteTimer = null;
+    this.workingTreeTimer = null;
     this.started = false;
   }
 
@@ -112,6 +128,13 @@ class Scheduler {
   }
 
   async collectOne(repoId: number): Promise<void> {
+    return this._collectOne(repoId, false);
+  }
+
+  // emitUpdate skipped when silent=true so batch callers (collectAllLocal)
+  // can fire one bulk event instead of N per-repo updates that each cause
+  // the client to refetch the full repos list.
+  private async _collectOne(repoId: number, silent: boolean): Promise<void> {
     const row = getRepoById(repoId);
     if (!row || row.deletedAt !== null) return;
     const now = Date.now();
@@ -122,11 +145,11 @@ class Scheduler {
         updateGithubSlug(row.id, snap.remoteUrl);
       }
       upsertSnapshot(row.id, snap, null, weirdFlags, now);
-      getStore().emitUpdate(row.id);
+      if (!silent) getStore().emitUpdate(row.id);
     } catch (err) {
       if (!existsSync(row.repoPath) || !existsSync(row.gitDirPath)) {
         markRepoDeleted(row.id, now);
-        getStore().emitBulk();
+        if (!silent) getStore().emitBulk();
         return;
       }
       console.error(`[scheduler] collect failed for ${row.repoPath}`, err);
@@ -195,8 +218,11 @@ class Scheduler {
   async collectAllLocal(): Promise<void> {
     const active = listActiveRepos(true);
     await Promise.all(
-      active.map((row) => this.localLimit(() => this.collectOne(row.id))),
+      active.map((row) => this.localLimit(() => this._collectOne(row.id, true))),
     );
+    // One bulk event after the batch — the client will re-pull /api/repos
+    // once instead of N times.
+    getStore().emitBulk();
   }
 
   /**
