@@ -193,9 +193,14 @@ New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
 # The shim forwards every argument verbatim to the gitdash binary inside the
 # default WSL distro. Using `wsl --` (no `-d`) means it works for whatever
 # distro the user actually has, not just Ubuntu.
+#
+# `bash -lc` runs a login shell so ~/.profile is sourced — that's what puts
+# ~/.local/bin (where the gitdash launcher lives) on PATH. Without -l, the
+# default non-interactive WSL shell sees an empty PATH for user binaries and
+# the very first `gitdash start` after install fails with "command not found".
 $shimContent = @'
 @echo off
-wsl -- gitdash %*
+wsl -- bash -lc "gitdash %*"
 '@
 Set-Content -Path $shimPath -Value $shimContent -Encoding ASCII
 Write-Ok "Shim written to $shimPath"
