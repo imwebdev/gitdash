@@ -127,6 +127,8 @@ export function friendlyStepLabel(label: string): string {
       return "Syncing with remote";
     case "push":
       return "Pushing to GitHub";
+    case "publish":
+      return "Publishing to GitHub";
     default:
       return label;
   }

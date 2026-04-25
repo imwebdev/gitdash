@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { bootstrap } from "@/lib/bootstrap";
 import { validateCsrf } from "@/lib/security/csrf";
 import { getRepoById, getSnapshot } from "@/lib/db/repos";
-import { isValidAction, startAction } from "@/lib/git/actions";
+import {
+  isValidAction,
+  isValidPublishName,
+  startAction,
+  type PublishOptions,
+} from "@/lib/git/actions";
 import { getScheduler } from "@/lib/scan/scheduler";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +39,7 @@ export async function POST(
   }
 
   let commitMessage: string | undefined;
+  let publish: PublishOptions | undefined;
   if (name === "commit-push") {
     try {
       const body = (await req.json()) as { commitMessage?: unknown };
@@ -43,6 +49,22 @@ export async function POST(
     } catch {
       // empty body is fine; sanitizer will use default
     }
+  } else if (name === "publish-to-github") {
+    let body: { name?: unknown; visibility?: unknown; description?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return NextResponse.json({ error: "publish requires a JSON body" }, { status: 400 });
+    }
+    if (typeof body.name !== "string" || !isValidPublishName(body.name)) {
+      return NextResponse.json(
+        { error: "invalid repository name (use letters, numbers, dots, dashes, underscores; 1-100 chars)" },
+        { status: 400 },
+      );
+    }
+    const visibility = body.visibility === "public" ? "public" : "private";
+    const description = typeof body.description === "string" ? body.description : undefined;
+    publish = { name: body.name, visibility, description };
   }
 
   const snap = getSnapshot(repoId);
@@ -54,6 +76,7 @@ export async function POST(
       action: name,
       branch: snap?.branch ?? null,
       commitMessage,
+      publish,
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 400 });

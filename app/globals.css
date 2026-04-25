@@ -8,8 +8,10 @@
   Computed ratios (text on bg):
     LIGHT  fg 16.32 · fg-muted 11.99 · fg-dim 7.53
            push 7.58 · pull 8.72 · diverged 8.31 · attention 7.31 · dirty 7.09 · clean 7.68
+           local-only 7.45
     DARK   fg 17.06 · fg-muted 12.02 · fg-dim 8.12
            push 12.07 · pull 9.90 · diverged 9.41 · attention 10.59 · dirty 12.38 · clean 11.71
+           local-only 8.94
 */
 
 @layer base {
@@ -32,6 +34,7 @@
     --attention: 17 79% 33%;            /* #9A3412 orange-800 */
     --dirty: 26 84% 31%;                /* #92400E amber-800 */
     --clean: 162 88% 20%;               /* #065F46 emerald-800 — Purity green */
+    --local-only: 263 60% 32%;          /* violet-800 — distinct from the 6 state hues */
 
     /* Tint alphas */
     --tint-alpha: 0.06;
@@ -54,6 +57,7 @@
     --attention: 28 96% 73%;            /* #FDBA74 orange-300 */
     --dirty: 46 97% 65%;                /* #FCD34D amber-300 */
     --clean: 156 72% 67%;               /* #6EE7B7 emerald-300 */
+    --local-only: 263 90% 82%;          /* violet-300 */
 
     --tint-alpha: 0.10;
   }
@@ -108,4 +112,5 @@
   .tint-attention { background-color: hsl(var(--attention) / var(--tint-alpha)); }
   .tint-dirty     { background-color: hsl(var(--dirty) / var(--tint-alpha)); }
   .tint-clean     { background-color: hsl(var(--clean) / var(--tint-alpha)); }
+  .tint-local-only { background-color: hsl(var(--local-only) / var(--tint-alpha)); }
 }

@@ -30,9 +30,12 @@ const COPY: Record<string, { verb: string; confirm?: string }> = {
       "This will combine GitHub's new commits with yours, creating a merge commit. Conflicts (if any) will be left in your working tree for you to resolve.",
   },
   "commit-push": { verb: "Committing and pushing to GitHub" },
+  "publish-to-github": { verb: "Publishing this repo to GitHub" },
   "open-editor": { verb: "Opening in your editor" },
   "open-terminal": { verb: "Opening a terminal" },
 };
+
+const PUBLISH_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 interface ChangeEntry {
   path: string;
@@ -52,8 +55,10 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const snap = repo.snapshot;
   const pushCount = snap?.remoteAhead ?? snap?.ahead ?? 0;
   const isCommitPush = action === "commit-push";
+  const isPublish = action === "publish-to-github";
   const needsConfirm =
     isCommitPush ||
+    isPublish ||
     action === "merge" ||
     (action === "push" && pushCount > DESTRUCTIVE_CONFIRMATION_LIMIT);
 
@@ -61,6 +66,9 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const [log, setLog] = useState<string[]>([]);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [commitMessage, setCommitMessage] = useState<string>("");
+  const [publishName, setPublishName] = useState<string>(repo.displayName);
+  const [publishVisibility, setPublishVisibility] = useState<"private" | "public">("private");
+  const [publishDescription, setPublishDescription] = useState<string>("");
   const [changes, setChanges] = useState<ChangesResponse | null>(null);
   const [changesLoading, setChangesLoading] = useState(isCommitPush);
   const [mounted, setMounted] = useState(false);
@@ -172,7 +180,16 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
 
     async function run() {
       try {
-        const body = isCommitPush ? { commitMessage: commitMessage.trim() } : {};
+        let body: Record<string, unknown> = {};
+        if (isCommitPush) {
+          body = { commitMessage: commitMessage.trim() };
+        } else if (isPublish) {
+          body = {
+            name: publishName.trim(),
+            visibility: publishVisibility,
+            description: publishDescription.trim(),
+          };
+        }
         const res = await fetch(`/api/repos/${repo.id}/actions/${action}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
@@ -217,7 +234,18 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
       cancelled = true;
       esRef.current?.close();
     };
-  }, [phase, action, repo.id, csrfToken, isCommitPush, commitMessage]);
+  }, [
+    phase,
+    action,
+    repo.id,
+    csrfToken,
+    isCommitPush,
+    isPublish,
+    commitMessage,
+    publishName,
+    publishVisibility,
+    publishDescription,
+  ]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -270,7 +298,20 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           />
         )}
 
-        {phase === "confirm" && !isCommitPush && (
+        {phase === "confirm" && isPublish && (
+          <PublishToGithubConfirm
+            name={publishName}
+            visibility={publishVisibility}
+            description={publishDescription}
+            onNameChange={setPublishName}
+            onVisibilityChange={setPublishVisibility}
+            onDescriptionChange={setPublishDescription}
+            onCancel={onClose}
+            onConfirm={() => setPhase("running")}
+          />
+        )}
+
+        {phase === "confirm" && !isCommitPush && !isPublish && (
           <div className="flex flex-col gap-4 px-6 py-6">
             <p className="text-[14px] leading-relaxed text-fg-muted">
               {action === "merge"
@@ -455,6 +496,128 @@ function FilePreview({ files }: { files: ChangeEntry[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function PublishToGithubConfirm({
+  name,
+  visibility,
+  description,
+  onNameChange,
+  onVisibilityChange,
+  onDescriptionChange,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  visibility: "private" | "public";
+  description: string;
+  onNameChange: (v: string) => void;
+  onVisibilityChange: (v: "private" | "public") => void;
+  onDescriptionChange: (v: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const trimmedName = name.trim();
+  const nameValid = PUBLISH_NAME_RE.test(trimmedName);
+
+  return (
+    <div className="flex flex-col gap-5 overflow-y-auto px-6 py-6">
+      <p className="text-[13.5px] leading-relaxed text-fg-muted">
+        Gitdash will create a new repository on GitHub and push your current branch to it.
+        The repo will be <span className="font-medium text-fg">private by default</span> — only you can see it unless you switch to public.
+      </p>
+
+      <label className="flex flex-col gap-2">
+        <span className="text-[12px] uppercase tracking-wider text-fg-dim">Repository name</span>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => onNameChange(e.target.value)}
+          maxLength={100}
+          spellCheck={false}
+          className={cn(
+            "rounded-lg border bg-bg/60 px-3.5 py-2 text-[13.5px] text-fg placeholder:text-fg-dim focus:outline-none",
+            nameValid
+              ? "border-border focus:border-ring"
+              : "border-accent-attention/60 focus:border-accent-attention",
+          )}
+        />
+        {!nameValid && (
+          <span className="text-[11px] text-accent-attention">
+            Names can only use letters, numbers, dots, dashes, and underscores. Must start with a letter or number.
+          </span>
+        )}
+      </label>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className="text-[12px] uppercase tracking-wider text-fg-dim">Visibility</legend>
+        <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-bg/40 p-3 text-[13px] sm:flex-1">
+            <input
+              type="radio"
+              name="publish-visibility"
+              value="private"
+              checked={visibility === "private"}
+              onChange={() => onVisibilityChange("private")}
+              className="mt-0.5 accent-accent-local-only"
+            />
+            <span className="flex flex-col">
+              <span className="font-medium text-fg">Private</span>
+              <span className="text-[11.5px] text-fg-dim">Only you can see this repo. Recommended.</span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-bg/40 p-3 text-[13px] sm:flex-1">
+            <input
+              type="radio"
+              name="publish-visibility"
+              value="public"
+              checked={visibility === "public"}
+              onChange={() => onVisibilityChange("public")}
+              className="mt-0.5 accent-accent-local-only"
+            />
+            <span className="flex flex-col">
+              <span className="font-medium text-fg">Public</span>
+              <span className="text-[11.5px] text-fg-dim">Anyone on the internet can see it.</span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
+      <label className="flex flex-col gap-2">
+        <span className="text-[12px] uppercase tracking-wider text-fg-dim">
+          Description <span className="text-fg-dim/70 normal-case tracking-normal">(optional)</span>
+        </span>
+        <input
+          type="text"
+          value={description}
+          onChange={(e) => onDescriptionChange(e.target.value)}
+          maxLength={350}
+          placeholder="What is this repo for?"
+          className="rounded-lg border border-border bg-bg/60 px-3.5 py-2 text-[13.5px] text-fg placeholder:text-fg-dim focus:border-ring focus:outline-none"
+        />
+      </label>
+
+      <div className="mt-1 flex justify-end gap-3">
+        <button
+          onClick={onCancel}
+          className="rounded-full border border-border px-4 py-1.5 text-[13px] font-medium text-fg-muted hover:border-fg-muted hover:text-fg"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={!nameValid}
+          className={cn(
+            "rounded-full border px-5 py-1.5 text-[13px] font-medium transition-all",
+            "border-accent-local-only/45 bg-accent-local-only/15 text-accent-local-only hover:bg-accent-local-only/25",
+            "disabled:cursor-not-allowed disabled:opacity-40",
+          )}
+        >
+          Publish
+        </button>
+      </div>
+    </div>
   );
 }
 
