@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { assertSafeRef } from "./exec";
 import { translateGitError, friendlyStepLabel } from "./error-hints";
 import { getDb } from "@/lib/db/schema";
+import { classifyPulledChanges } from "@/lib/security/post-pull";
+import { insertPullAlert } from "@/lib/db/alerts";
 
 const execFileAsync = promisify(execFile);
 
@@ -106,6 +108,23 @@ export function startAction(opts: StartOptions): ActionRun {
     const publish = opts.publish;
     setImmediate(() => {
       executePublishToGithub(run, opts.repoPath, publish).catch((err) => {
+        run.emitter.emit("done", { exitCode: -1 });
+        run.exitCode = -1;
+        run.finishedAt = Date.now();
+        recordRunFinish(run);
+        run.lines.push(`[fatal] ${(err as Error).message}`);
+      });
+    });
+    getDb().prepare(
+      "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
+    ).run(opts.repoId, opts.action, run.startedAt);
+    return run;
+  }
+
+  // pull gets special treatment: capture pre-pull HEAD so we can diff after.
+  if (opts.action === "pull") {
+    setImmediate(() => {
+      executePull(run, opts.repoPath, opts.repoId).catch((err) => {
         run.emitter.emit("done", { exitCode: -1 });
         run.exitCode = -1;
         run.finishedAt = Date.now();
@@ -419,6 +438,58 @@ async function executeFetchRebase(
   emit("[gitdash] ✗ Rebase had conflicts — repo restored to pre-pull state.");
   emitHint(emit, run.lines);
   return false;
+}
+
+async function executePull(run: ActionRun, repoPath: string, repoId: number): Promise<void> {
+  const emit = (text: string) => {
+    run.lines.push(text);
+    run.emitter.emit("line", text);
+  };
+
+  let oldHead: string | null = null;
+  try {
+    const result = await execFileAsync(
+      "git",
+      ["-C", repoPath, "rev-parse", "HEAD"],
+      { timeout: 5_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+    );
+    oldHead = result.stdout.trim() || null;
+  } catch {
+    // non-fatal; classifier will be skipped
+  }
+
+  const code = await spawnGitStep(run, emit, ["pull", "--ff-only"], repoPath);
+
+  run.finishedAt = Date.now();
+  run.exitCode = code;
+  recordRunFinish(run);
+
+  if (code === 0 && oldHead) {
+    try {
+      const result = await execFileAsync(
+        "git",
+        ["-C", repoPath, "rev-parse", "HEAD"],
+        { timeout: 5_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+      );
+      const newHead = result.stdout.trim();
+      if (newHead && newHead !== oldHead) {
+        const findings = await classifyPulledChanges(repoPath, oldHead, newHead);
+        if (findings.length > 0) {
+          insertPullAlert(repoId, findings, Date.now());
+          run.emitter.emit("done", { exitCode: 0, pullFindings: findings });
+          return;
+        }
+      }
+    } catch {
+      // classifier failure must never block a successful pull
+    }
+  }
+
+  if (code !== 0) {
+    emit(`[gitdash] ✗ ${friendlyActionLabel("pull")} didn't complete (exit ${code}).`);
+    emitHint(emit, run.lines);
+  }
+  run.emitter.emit("done", { exitCode: code });
 }
 
 /** Standalone push action: fetch-rebase → push. */

@@ -82,6 +82,16 @@ function migrate(db: Database.Database): void {
       truncated_output TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_actions_repo ON actions_log(repo_id, started_at DESC);
+
+    CREATE TABLE IF NOT EXISTS pull_alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_id INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      acknowledged_at INTEGER,
+      findings_json TEXT NOT NULL,
+      FOREIGN KEY (repo_id) REFERENCES repos(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_pull_alerts_repo_unack ON pull_alerts(repo_id, acknowledged_at);
   `);
 
   // Idempotent column-add migrations. SQLite has no IF NOT EXISTS on ADD

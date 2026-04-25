@@ -4,12 +4,14 @@ import { cn } from "@/lib/utils";
 import type { RepoView } from "@/lib/state/store";
 import { ActionModal } from "./ActionModal";
 import { RowDetail } from "./RowDetail";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ChevronDown,
   ExternalLink,
   GitPullRequest,
   RefreshCw,
+  X,
 } from "lucide-react";
 
 type PillTone = "push" | "pull" | "clean" | "dirty" | "attention" | "neutral";
@@ -129,7 +131,9 @@ interface Props {
 
 export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
   const [modalAction, setModalAction] = useState<string | null>(null);
+  const [pullAlertOpen, setPullAlertOpen] = useState(false);
   const snap = repo.snapshot;
+  const pullAlertCount = repo.pullAlertCount ?? 0;
 
   const ghOwner = repo.githubOwner;
   const ghName = repo.githubName;
@@ -215,24 +219,33 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
           />
           <PrCell count={prCount} url={ghPrUrl} />
 
-          {buttons.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5 justify-self-start">
-              {buttons.map((b) => (
-                <button
-                  key={b.action}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setModalAction(b.action);
-                  }}
-                  className={actionButtonClass(kind, b.variant)}
-                >
-                  {b.label}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <span />
-          )}
+          <div className="flex flex-wrap items-center gap-1.5 justify-self-start">
+            {buttons.map((b) => (
+              <button
+                key={b.action}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setModalAction(b.action);
+                }}
+                className={actionButtonClass(kind, b.variant)}
+              >
+                {b.label}
+              </button>
+            ))}
+            {pullAlertCount > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPullAlertOpen(true);
+                }}
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-accent-attention/40 bg-accent-attention/10 px-2.5 py-1 text-[11px] font-medium text-accent-attention hover:bg-accent-attention/20"
+                aria-label="Review pulled changes"
+              >
+                <AlertTriangle className="h-3 w-3" />
+                Review pulled changes
+              </button>
+            )}
+          </div>
 
           <RowIcons
             ghUrl={ghUrl}
@@ -298,7 +311,7 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
             </span>
           </div>
 
-          {buttons.length > 0 && (
+          {(buttons.length > 0 || pullAlertCount > 0) && (
             <div className="flex flex-wrap items-center gap-2">
               {buttons.map((b) => (
                 <button
@@ -312,6 +325,19 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
                   {b.label}
                 </button>
               ))}
+              {pullAlertCount > 0 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPullAlertOpen(true);
+                  }}
+                  className="inline-flex h-11 items-center gap-1.5 whitespace-nowrap rounded-full border border-accent-attention/40 bg-accent-attention/10 px-4 text-[13px] font-medium text-accent-attention hover:bg-accent-attention/20 sm:h-10"
+                  aria-label="Review pulled changes"
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Review pulled changes
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -327,7 +353,154 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
           onClose={() => setModalAction(null)}
         />
       )}
+
+      {pullAlertOpen && (
+        <PullAlertModal
+          repoId={repo.id}
+          csrfToken={csrfToken}
+          onClose={() => setPullAlertOpen(false)}
+        />
+      )}
     </>
+  );
+}
+
+interface PullFinding {
+  path: string;
+  reason: string;
+}
+
+interface PullAlertResponse {
+  alerts: Array<{ id: number; repoId: number; createdAt: number; acknowledgedAt: number | null; findings: PullFinding[] }>;
+}
+
+function PullAlertModal({
+  repoId,
+  csrfToken,
+  onClose,
+}: {
+  repoId: number;
+  csrfToken: string;
+  onClose: () => void;
+}) {
+  const [alerts, setAlerts] = useState<PullAlertResponse["alerts"]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dismissing, setDismissing] = useState<number | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/repos/${repoId}/pull-alerts`)
+      .then((r) => r.json() as Promise<PullAlertResponse>)
+      .then((data) => {
+        if (!cancelled) setAlerts(data.alerts);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repoId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const allFindings = alerts.flatMap((a) => a.findings);
+  const latestAlertId = alerts[0]?.id ?? null;
+
+  const handleDismiss = async () => {
+    if (!latestAlertId) return;
+    setDismissing(latestAlertId);
+    try {
+      await fetch(`/api/repos/${repoId}/pull-alerts/${latestAlertId}/dismiss`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+      });
+      onClose();
+    } catch {
+      setDismissing(null);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-up"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Review pulled changes"
+        className="flex max-h-[min(80vh,640px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-accent-attention" />
+            <h2 className="text-[15px] font-medium text-fg">Review before running setup</h2>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-full text-fg-muted hover:bg-bg-hover hover:text-fg sm:h-8 sm:w-8"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {loading && (
+            <p className="text-[13px] text-fg-dim">Loading…</p>
+          )}
+
+          {!loading && allFindings.length === 0 && (
+            <p className="text-[13px] text-fg-muted">No unreviewed changes.</p>
+          )}
+
+          {!loading && allFindings.length > 0 && (
+            <>
+              <p className="text-[13px] leading-relaxed text-fg-muted">
+                The last pull brought in files that can run code on your computer. Don&apos;t run any install or setup commands until you&apos;ve reviewed what changed.
+              </p>
+              <ul className="mt-3 space-y-3">
+                {allFindings.map((f, i) => (
+                  <li key={i} className="rounded-lg border border-border-subtle bg-bg px-4 py-3">
+                    <p className="mono text-[12px] font-medium text-accent-attention">{f.path}</p>
+                    <p className="mt-1 text-[12px] text-fg-muted">{f.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+
+        <footer className="flex items-center justify-end gap-3 border-t border-border-subtle px-5 py-3">
+          <button
+            onClick={onClose}
+            className="rounded-full border border-border px-4 py-1.5 text-[13px] font-medium text-fg-muted hover:border-fg-muted hover:text-fg"
+          >
+            Close
+          </button>
+          {allFindings.length > 0 && (
+            <button
+              onClick={handleDismiss}
+              disabled={dismissing !== null}
+              className="rounded-full border border-accent-attention/45 bg-accent-attention/10 px-4 py-1.5 text-[13px] font-medium text-accent-attention hover:bg-accent-attention/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {dismissing !== null ? "Dismissing…" : "Got it, dismiss"}
+            </button>
+          )}
+        </footer>
+      </div>
+    </div>
   );
 }
 

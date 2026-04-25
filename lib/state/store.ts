@@ -10,6 +10,7 @@ export interface RepoView {
   githubName: string | null;
   snapshot: SnapshotRow | null;
   derivedState: DerivedState;
+  pullAlertCount?: number;
 }
 
 export type DerivedState =
