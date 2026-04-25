@@ -52,6 +52,11 @@ interface ChangesResponse {
   truncated: boolean;
 }
 
+interface PullFinding {
+  path: string;
+  reason: string;
+}
+
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const snap = repo.snapshot;
   const pushCount = snap?.remoteAhead ?? snap?.ahead ?? 0;
@@ -74,6 +79,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const [publishDescription, setPublishDescription] = useState<string>("");
   const [changes, setChanges] = useState<ChangesResponse | null>(null);
   const [changesLoading, setChangesLoading] = useState(isCommitFlow);
+  const [pullFindings, setPullFindings] = useState<PullFinding[]>([]);
   const [mounted, setMounted] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -216,8 +222,11 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           setLog((l) => [...l, data.text]);
         });
         es.addEventListener("done", (ev: MessageEvent) => {
-          const data = JSON.parse(ev.data) as { exitCode: number };
+          const data = JSON.parse(ev.data) as { exitCode: number; pullFindings?: PullFinding[] };
           setExitCode(data.exitCode);
+          if (data.pullFindings && data.pullFindings.length > 0) {
+            setPullFindings(data.pullFindings);
+          }
           setPhase(data.exitCode === 0 ? "done" : "error");
           es.close();
         });
@@ -353,6 +362,10 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           </pre>
         )}
 
+        {phase === "done" && pullFindings.length > 0 && (
+          <PullFindingsAlert findings={pullFindings} />
+        )}
+
         {phase !== "confirm" && (
           <footer className="flex items-center justify-between px-6 py-3 text-[12px]">
             <div className={cn(
@@ -378,6 +391,32 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   );
 
   return createPortal(dialog, document.body);
+}
+
+function PullFindingsAlert({ findings }: { findings: PullFinding[] }) {
+  return (
+    <div className="border-t border-accent-attention/30 bg-accent-attention/8 px-6 py-4">
+      <div className="flex gap-3">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-accent-attention" />
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-fg">
+            Review these changes before running any setup
+          </p>
+          <p className="mt-0.5 text-[12px] text-fg-muted">
+            The pull brought in files that can run code on your computer. You don&apos;t have to do anything right now — just don&apos;t run install or setup commands until you&apos;ve taken a look.
+          </p>
+          <ul className="mt-2.5 space-y-2">
+            {findings.map((f) => (
+              <li key={f.path} className="text-[12px]">
+                <span className="mono text-accent-attention">{f.path}</span>
+                <span className="ml-2 text-fg-muted">— {f.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CommitPushConfirm({
