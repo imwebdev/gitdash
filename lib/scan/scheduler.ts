@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import pLimit from "p-limit";
 import { discoverRepos, detectWeirdFlags, type DiscoveryConfig, parseGithubSlug } from "./discover";
 import { collectSnapshot } from "@/lib/git/status";
-import { compareWithRemote, fetchOpenPrCount, fetchCanPush } from "@/lib/gh/client";
+import { compareWithRemote, fetchOpenPrCount, fetchCanPush, type RemoteState } from "@/lib/gh/client";
 import {
   upsertDiscoveredRepo,
   upsertSnapshot,
@@ -12,6 +12,35 @@ import {
   getRepoById,
 } from "@/lib/db/repos";
 import { getStore } from "@/lib/state/store";
+import { getDb } from "@/lib/db/schema";
+
+// ---------------------------------------------------------------------------
+// In-memory rate limiter for refreshRemoteOne — module-level Map is adequate
+// for a single-process gitdash and survives Next.js HMR fine.
+// ---------------------------------------------------------------------------
+const refreshTimestamps = new Map<number, number>();
+const MIN_REFRESH_INTERVAL_MS = 5_000;
+
+export function rateLimitCheck(repoId: number): { allowed: boolean; retryAfterMs: number } {
+  const last = refreshTimestamps.get(repoId) ?? 0;
+  const elapsed = Date.now() - last;
+  if (elapsed < MIN_REFRESH_INTERVAL_MS) {
+    return { allowed: false, retryAfterMs: MIN_REFRESH_INTERVAL_MS - elapsed };
+  }
+  return { allowed: true, retryAfterMs: 0 };
+}
+
+export function recordRefreshTimestamp(repoId: number): void {
+  refreshTimestamps.set(repoId, Date.now());
+}
+
+export type RefreshRemoteResult = {
+  state: RemoteState | "no-github" | "no-snapshot";
+  ahead: number;
+  behind: number;
+  remoteSha: string | null;
+  checkedAt: number;
+};
 
 export interface SchedulerOptions {
   config: DiscoveryConfig;
@@ -102,6 +131,65 @@ class Scheduler {
       }
       console.error(`[scheduler] collect failed for ${row.repoPath}`, err);
     }
+  }
+
+  /**
+   * Force-refresh the remote state for a single repo, bypassing the normal
+   * round-robin cadence. Cache entries for this repo's slug are invalidated
+   * first so we get a fresh API call rather than a 304 hit.
+   */
+  async refreshRemoteOne(repoId: number): Promise<RefreshRemoteResult> {
+    const now = Date.now();
+    const row = getRepoById(repoId);
+    if (!row || row.deletedAt !== null) {
+      return { state: "no-github", ahead: 0, behind: 0, remoteSha: null, checkedAt: now };
+    }
+
+    // Collect current local state first.
+    let snap;
+    let weirdFlags: string[] = [];
+    try {
+      snap = await collectSnapshot({ path: row.repoPath });
+      weirdFlags = await detectWeirdFlags(row.repoPath);
+      if (snap.remoteUrl && !row.githubOwner) {
+        updateGithubSlug(row.id, snap.remoteUrl);
+      }
+      upsertSnapshot(row.id, snap, null, weirdFlags, now);
+    } catch {
+      return { state: "no-snapshot", ahead: 0, behind: 0, remoteSha: null, checkedAt: now };
+    }
+
+    const slug = parseGithubSlug(snap.remoteUrl);
+    if (!slug) {
+      return { state: "no-github", ahead: 0, behind: 0, remoteSha: null, checkedAt: now };
+    }
+    if (!snap.status.headSha || !snap.status.branch) {
+      return { state: "no-snapshot", ahead: 0, behind: 0, remoteSha: null, checkedAt: now };
+    }
+
+    // Invalidate ETag cache rows for this slug so we bypass 304 caching.
+    const likeCommits = `commits:${slug.owner}/${slug.name}:%`;
+    const likeCompare = `compare:${slug.owner}/${slug.name}:%`;
+    getDb().prepare("DELETE FROM gh_etag_cache WHERE key LIKE ?").run(likeCommits);
+    getDb().prepare("DELETE FROM gh_etag_cache WHERE key LIKE ?").run(likeCompare);
+
+    // Run remote checks in parallel; errors are swallowed by each helper.
+    const [comparison, prCount, canPush] = await Promise.all([
+      compareWithRemote(slug, snap.status.headSha, snap.status.branch),
+      fetchOpenPrCount(slug),
+      fetchCanPush(slug),
+    ]);
+
+    upsertSnapshot(row.id, snap, comparison, weirdFlags, Date.now(), prCount, canPush);
+    getStore().emitUpdate(repoId);
+
+    return {
+      state: comparison.state,
+      ahead: comparison.ahead,
+      behind: comparison.behind,
+      remoteSha: comparison.remoteSha,
+      checkedAt: comparison.checkedAt,
+    };
   }
 
   async collectAllLocal(): Promise<void> {
