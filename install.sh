@@ -63,6 +63,30 @@ step "1/6 Preflight checks"
   exit 1
 }
 
+# Without a git identity, the very first Commit & push from the dashboard
+# fails with the cryptic "Author identity unknown" block. Set defaults from
+# the gh-authenticated account using the GitHub noreply email so the user's
+# real address never lands in commit metadata.
+if ! git config --global --get user.email >/dev/null 2>&1 || \
+   ! git config --global --get user.name >/dev/null 2>&1; then
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    GH_LOGIN="$(gh api user --jq '.login' 2>/dev/null || echo "")"
+    GH_ID="$(gh api user --jq '.id' 2>/dev/null || echo "")"
+    GH_NAME="$(gh api user --jq '.name // .login' 2>/dev/null || echo "")"
+    if [[ -n "$GH_LOGIN" && -n "$GH_ID" ]]; then
+      git config --global user.email "${GH_ID}+${GH_LOGIN}@users.noreply.github.com"
+      git config --global user.name "${GH_NAME:-$GH_LOGIN}"
+      green "  set git user.email = ${GH_ID}+${GH_LOGIN}@users.noreply.github.com (GitHub noreply)"
+      green "  set git user.name  = ${GH_NAME:-$GH_LOGIN}"
+    fi
+  else
+    dim "  gh not authenticated — git user.email/user.name not set."
+    dim "  Run manually before first commit:"
+    dim "    git config --global user.email \"you@example.com\""
+    dim "    git config --global user.name  \"Your Name\""
+  fi
+fi
+
 # ─────────────────────────────────────────────────────────
 step "2/6 Installing dependencies"
 cd "$REPO_DIR"

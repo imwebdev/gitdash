@@ -288,6 +288,33 @@ ensure_gh_auth() {
   else
     warn "gh auth setup-git failed — you may still hit auth errors on push"
   fi
+
+  # Ensure git identity is configured. Without this, every first commit fails
+  # with the cryptic "Author identity unknown" block and gitdash's Commit
+  # & push button leads beginners to a wall of git output. Derive defaults
+  # from the gh-authenticated account; use the GitHub noreply email so the
+  # user's real address never lands in commit metadata.
+  if git config --global --get user.email >/dev/null 2>&1 && \
+     git config --global --get user.name >/dev/null 2>&1; then
+    ok "git identity already set ($(git config --global --get user.email))"
+  else
+    local gh_login gh_id gh_name email name
+    gh_login="$(gh api user --jq '.login' 2>/dev/null || echo "")"
+    gh_id="$(gh api user --jq '.id' 2>/dev/null || echo "")"
+    gh_name="$(gh api user --jq '.name // .login' 2>/dev/null || echo "")"
+    if [ -n "$gh_login" ] && [ -n "$gh_id" ]; then
+      email="${gh_id}+${gh_login}@users.noreply.github.com"
+      name="${gh_name:-$gh_login}"
+      git config --global user.email "$email"
+      git config --global user.name "$name"
+      ok "set git user.email = $email"
+      ok "set git user.name  = $name"
+    else
+      warn "could not derive identity from gh — set manually:"
+      printf '    git config --global user.email "you@example.com"\n'
+      printf '    git config --global user.name  "Your Name"\n'
+    fi
+  fi
 }
 
 # ---- clone / update --------------------------------------------------------
