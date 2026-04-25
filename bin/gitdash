@@ -57,6 +57,17 @@ if [[ "$MODE" == "status" ]]; then
   exec "$TSX" "$DIR/scripts/status.ts" "$@"
 fi
 
+# mark-reviewed subcommand: records current HEAD as the last-reviewed point.
+if [[ "$MODE" == "mark-reviewed" ]]; then
+  shift
+  TSX="$DIR/node_modules/.bin/tsx"
+  if [[ ! -x "$TSX" ]]; then
+    # Silent failure — runs in hook context
+    exit 0
+  fi
+  exec "$TSX" "$DIR/scripts/mark-reviewed.ts" "$@"
+fi
+
 if [[ ! -d "$DIR/.next" && "$MODE" == "start" ]]; then
   echo "[gitdash] no build found — running \`npm run build\` first"
   npm run build
@@ -86,5 +97,5 @@ fi
 case "$MODE" in
   start) exec "$NEXT" start -H "$BIND" -p "$PORT" ;;
   dev)   exec "$NEXT" dev   -H "$BIND" -p "$PORT" ;;
-  *)     echo "usage: gitdash [start|dev|status [--cwd <path>]]" >&2; exit 1 ;;
+  *)     echo "usage: gitdash [start|dev|status|mark-reviewed [--cwd <path>]]" >&2; exit 1 ;;
 esac

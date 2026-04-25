@@ -14,6 +14,8 @@ export interface RepoRow {
   discoveredAt: number;
   lastSeenAt: number;
   deletedAt: number | null;
+  lastReviewAt: number | null;
+  reviewedHeadSha: string | null;
 }
 
 interface RepoRaw {
@@ -26,6 +28,8 @@ interface RepoRaw {
   discovered_at: number;
   last_seen_at: number;
   deleted_at: number | null;
+  last_review_at: number | null;
+  reviewed_head_sha: string | null;
 }
 
 export interface SnapshotRow {
@@ -93,6 +97,8 @@ export function upsertDiscoveredRepo(discovered: DiscoveredRepo, now: number): R
     discoveredAt: now,
     lastSeenAt: now,
     deletedAt: null,
+    lastReviewAt: null,
+    reviewedHeadSha: null,
   };
 }
 
@@ -282,7 +288,22 @@ function rawToRepoRow(r: RepoRaw): RepoRow {
     discoveredAt: r.discovered_at,
     lastSeenAt: r.last_seen_at,
     deletedAt: r.deleted_at,
+    lastReviewAt: r.last_review_at ?? null,
+    reviewedHeadSha: r.reviewed_head_sha ?? null,
   };
+}
+
+export function getRepoByPath(repoPath: string): RepoRow | null {
+  const row = getDb()
+    .prepare<[string], RepoRaw>("SELECT * FROM repos WHERE repo_path = ? AND deleted_at IS NULL")
+    .get(repoPath);
+  return row ? rawToRepoRow(row) : null;
+}
+
+export function markRepoReviewed(repoId: number, headSha: string, now: number): void {
+  getDb()
+    .prepare("UPDATE repos SET last_review_at = ?, reviewed_head_sha = ? WHERE id = ?")
+    .run(now, headSha, repoId);
 }
 
 function rawToSnapshot(r: SnapshotRaw): SnapshotRow {

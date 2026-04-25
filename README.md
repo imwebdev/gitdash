@@ -245,6 +245,66 @@ Sample output lines:
 
 If gitdash hasn't scanned the directory yet, or the path isn't a git repo, the command prints nothing and exits 0 — it never pollutes your session with errors.
 
+### Security review nudge
+
+When `gitdash status` fires at session start it also checks whether a security review is overdue. If you have accumulated 5 or more commits since your last review, or 7 or more days have passed, a second line appears:
+
+```
+✓ gitdash: in sync · main
+   → 6 commit(s) since last review · run /security-review to scan
+```
+
+The thresholds are configurable in `~/.config/gitdash/config.json`:
+
+```json
+{
+  "reviewSuggest": {
+    "enabled": true,
+    "commitThreshold": 5,
+    "daysCadence": 7
+  }
+}
+```
+
+Set `"enabled": false` to silence the nudge entirely.
+
+### Optional Stop hook — mark-reviewed automatically (opt-in)
+
+After each Claude Code session you can automatically record the current HEAD as reviewed by adding a `Stop` hook. **This is opt-in — gitdash does not install it automatically.**
+
+Add this block to `~/.claude/settings.json` alongside the `SessionStart` entry:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gitdash status --cwd $CLAUDE_PROJECT_DIR"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gitdash mark-reviewed --cwd $CLAUDE_PROJECT_DIR"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+You can also run `gitdash mark-reviewed` manually at any time to reset the review counter for the repo in your current directory.
+
 ---
 
 ## 📜 License

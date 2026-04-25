@@ -2,6 +2,8 @@
  * scripts/status.ts
  *
  * Prints a one-line git status summary for the repo at --cwd (default $PWD).
+ * Optionally prints a second line nudging for a security review when
+ * unreviewed commits accumulate past configured thresholds.
  * Reads SQLite directly — no server needed.
  *
  * Usage:  tsx scripts/status.ts [--cwd <path>]
@@ -11,7 +13,8 @@
  */
 
 import Database from "better-sqlite3";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import path from "node:path";
 
 // ── CLI arg parsing ──────────────────────────────────────────────────────────
@@ -56,6 +59,74 @@ const DB_PATH =
 
 if (!existsSync(DB_PATH)) process.exit(0);
 
+// ── Load reviewSuggest config ────────────────────────────────────────────────
+
+interface ReviewSuggestConfig {
+  enabled: boolean;
+  commitThreshold: number;
+  daysCadence: number;
+}
+
+function loadReviewConfig(): ReviewSuggestConfig {
+  const defaults: ReviewSuggestConfig = {
+    enabled: true,
+    commitThreshold: 5,
+    daysCadence: 7,
+  };
+  try {
+    const configPath = path.join(
+      process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? ".", ".config"),
+      "gitdash",
+      "config.json",
+    );
+    if (!existsSync(configPath)) return defaults;
+    const raw = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const rs = raw["reviewSuggest"] as Record<string, unknown> | undefined;
+    if (!rs) return defaults;
+    return {
+      enabled: typeof rs["enabled"] === "boolean" ? rs["enabled"] : defaults.enabled,
+      commitThreshold:
+        typeof rs["commitThreshold"] === "number" ? rs["commitThreshold"] : defaults.commitThreshold,
+      daysCadence:
+        typeof rs["daysCadence"] === "number" ? rs["daysCadence"] : defaults.daysCadence,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+// ── execFile helper (no shell, matches security model) ───────────────────────
+
+function gitRevListCount(repoPath: string, range: string): Promise<number> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", repoPath, "rev-list", "--count", range],
+      { timeout: 5000 },
+      (err, stdout) => {
+        if (err) { resolve(0); return; }
+        const n = parseInt(stdout.trim(), 10);
+        resolve(isNaN(n) ? 0 : n);
+      },
+    );
+  });
+}
+
+function gitRevParse(repoPath: string, ref: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", repoPath, "rev-parse", "--verify", ref],
+      { timeout: 5000 },
+      (err, stdout) => {
+        if (err) { resolve(null); return; }
+        const sha = stdout.trim();
+        resolve(sha || null);
+      },
+    );
+  });
+}
+
 try {
   const db = new Database(DB_PATH, { readonly: true });
 
@@ -66,10 +137,12 @@ try {
     is_system_repo: number;
     github_owner: string | null;
     github_name: string | null;
+    last_review_at: number | null;
+    reviewed_head_sha: string | null;
   }
   const repo = db
     .prepare<[string], RepoRaw>(
-      "SELECT id, is_system_repo, github_owner, github_name FROM repos WHERE repo_path = ? AND deleted_at IS NULL",
+      "SELECT id, is_system_repo, github_owner, github_name, last_review_at, reviewed_head_sha FROM repos WHERE repo_path = ? AND deleted_at IS NULL",
     )
     .get(gitRoot);
 
@@ -157,9 +230,67 @@ try {
   };
 
   process.stdout.write(lines[state] + "\n");
+
+  // ── Review nudge ───────────────────────────────────────────────────────────
+
+  const reviewConfig = loadReviewConfig();
+  const lastReviewAt: number | null = repo.last_review_at ?? null;
+  const reviewedHeadSha: string | null = repo.reviewed_head_sha ?? null;
+
   db.close();
+
+  if (reviewConfig.enabled) {
+    // Async git calls — run and always exit 0 when done
+    (async () => {
+      try {
+        // Compute commitsSinceReview
+        let commitsSinceReview: number;
+
+        if (reviewedHeadSha) {
+          // Check if the reviewed SHA is still reachable
+          const resolved = await gitRevParse(gitRoot, reviewedHeadSha);
+          if (resolved) {
+            // Count commits from reviewed sha to HEAD
+            commitsSinceReview = await gitRevListCount(gitRoot, `${reviewedHeadSha}..HEAD`);
+          } else {
+            // SHA no longer reachable (force-push / rebase) — count from total
+            commitsSinceReview = await gitRevListCount(gitRoot, "HEAD");
+          }
+        } else {
+          // Never reviewed — count all commits
+          commitsSinceReview = await gitRevListCount(gitRoot, "HEAD");
+        }
+
+        // Compute daysSinceReview.
+        // Only apply the time cadence when a baseline review exists.
+        // When lastReviewAt is null the repo has never been reviewed — the
+        // time trigger does not apply (only the commit threshold does).
+        const daysSinceReview =
+          lastReviewAt === null
+            ? null
+            : (Date.now() - lastReviewAt) / 86_400_000;
+
+        // Edge case: brand-new repo with 0–2 commits, never reviewed → skip nudge
+        const commitThresholdMet = commitsSinceReview >= reviewConfig.commitThreshold;
+        const timeThresholdMet =
+          daysSinceReview !== null && daysSinceReview >= reviewConfig.daysCadence;
+
+        const isNewAndUnreviewed = reviewedHeadSha === null && commitsSinceReview <= 2;
+        const shouldNudge = !isNewAndUnreviewed && (commitThresholdMet || timeThresholdMet);
+
+        if (shouldNudge) {
+          process.stdout.write(
+            `   → ${commitsSinceReview} commit(s) since last review · run /security-review to scan\n`,
+          );
+        }
+      } catch {
+        // Stay silent on any error
+      }
+    })().finally(() => process.exit(0));
+  } else {
+    process.exit(0);
+  }
 } catch {
   // DB locked, corrupt, or missing table — stay silent
+  process.exit(0);
 }
-
-process.exit(0);
