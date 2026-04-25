@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import pLimit from "p-limit";
 import { discoverRepos, detectWeirdFlags, type DiscoveryConfig, parseGithubSlug } from "./discover";
 import { collectSnapshot } from "@/lib/git/status";
@@ -94,6 +95,11 @@ class Scheduler {
       upsertSnapshot(row.id, snap, null, weirdFlags, now);
       getStore().emitUpdate(row.id);
     } catch (err) {
+      if (!existsSync(row.repoPath) || !existsSync(row.gitDirPath)) {
+        markRepoDeleted(row.id, now);
+        getStore().emitBulk();
+        return;
+      }
       console.error(`[scheduler] collect failed for ${row.repoPath}`, err);
     }
   }
