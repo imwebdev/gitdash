@@ -16,8 +16,11 @@ interface Group {
   kind: GroupKind;
   headline: string;
   body: string;
+  explainer: ExplainerSegment[];
   defaultCollapsed?: boolean;
 }
+
+export type ExplainerSegment = { text: string; bold?: boolean };
 
 function groupFor(repo: RepoView): GroupKind {
   const s = repo.derivedState;
@@ -42,7 +45,7 @@ function groupFor(repo: RepoView): GroupKind {
   return "clean";
 }
 
-function buildGroups(repos: RepoView[]): { kind: GroupKind; headline: string; body: string; repos: RepoView[]; defaultCollapsed: boolean }[] {
+function buildGroups(repos: RepoView[]): { kind: GroupKind; headline: string; body: string; explainer: ExplainerSegment[]; repos: RepoView[]; defaultCollapsed: boolean }[] {
   const buckets = new Map<GroupKind, RepoView[]>();
   for (const r of repos) {
     const g = groupFor(r);
@@ -63,6 +66,7 @@ function buildGroups(repos: RepoView[]): { kind: GroupKind; headline: string; bo
         kind,
         headline: headlineFor(kind, list.length),
         body: bodyFor(kind, list.length),
+        explainer: explainerFor(kind),
         repos: list,
         defaultCollapsed: false,
       };
@@ -82,6 +86,57 @@ function headlineFor(kind: GroupKind, n: number): string {
     case "clean": return n === 0
       ? "no updates needed"
       : `${plural === "repo" ? "needs" : "need"} no updates`;
+  }
+}
+
+// Plain-English "what does this mean?" copy for beginners. Always visible
+// under the section header so users who've never used git can still figure
+// out what each section is asking of them. Bolded segments map to the
+// actual button labels (Push / Pull / Commit / Merge / Publish to GitHub).
+function explainerFor(kind: GroupKind): ExplainerSegment[] {
+  switch (kind) {
+    case "push":
+      return [
+        { text: "Your computer has new work that GitHub doesn't have yet. Click " },
+        { text: "Push", bold: true },
+        { text: " to upload it so it's safe and other computers can see it." },
+      ];
+    case "pull":
+      return [
+        { text: "GitHub has new work that your computer doesn't have yet. Click " },
+        { text: "Pull", bold: true },
+        { text: " to download it." },
+      ];
+    case "diverged":
+      return [
+        { text: "Your computer and GitHub both have changes the other doesn't know about. You'll need to " },
+        { text: "Merge", bold: true },
+        { text: " them together." },
+      ];
+    case "dirty":
+      return [
+        { text: "You changed files but haven't told git to save them yet. Click " },
+        { text: "Commit & push", bold: true },
+        { text: " to save a snapshot and upload it." },
+      ];
+    case "attention":
+      return [
+        { text: "Something needs your eyes — a merge conflict or a step git can't auto-resolve. Open the folder and finish what you started." },
+      ];
+    case "local-only":
+      return [
+        { text: "Never connected to GitHub. Click " },
+        { text: "Publish to GitHub", bold: true },
+        { text: " to back it up online — defaults to private." },
+      ];
+    case "read-only":
+      return [
+        { text: "You can look at this repo but can't push to it. Probably not yours, or a fork without write access." },
+      ];
+    case "clean":
+      return [
+        { text: "Everything is in sync with GitHub. Nothing to do here." },
+      ];
   }
 }
 
@@ -253,6 +308,7 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
               kind={g.kind}
               headline={g.headline}
               body={g.body}
+              explainer={g.explainer}
               repos={g.repos}
               csrfToken={csrfToken}
               defaultCollapsed={g.defaultCollapsed}

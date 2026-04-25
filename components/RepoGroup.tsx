@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { RepoView } from "@/lib/state/store";
 import { RepoCard, ROW_GRID, type GroupKind } from "./RepoCard";
+import type { ExplainerSegment } from "./Dashboard";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +11,7 @@ interface Props {
   kind: GroupKind;
   headline: string;
   body: string;
+  explainer: ExplainerSegment[];
   repos: RepoView[];
   csrfToken: string;
   defaultCollapsed?: boolean;
@@ -47,6 +49,7 @@ export function RepoGroup({
   kind,
   headline,
   body,
+  explainer,
   repos,
   csrfToken,
   defaultCollapsed = false,
@@ -93,6 +96,13 @@ export function RepoGroup({
         <div className="flex min-w-0 flex-1 flex-col pt-1 sm:pt-2">
           <h2 className="display text-[18px] leading-tight text-fg sm:text-[22px]">{headline}</h2>
           <p className="mt-1 text-[12px] text-fg-muted sm:text-[13px]">{body}</p>
+          <p className="mt-2 text-[12px] leading-relaxed text-fg-dim sm:text-[12.5px]">
+            {explainer.map((seg, i) => (
+              <Fragment key={i}>
+                {seg.bold ? <span className="font-medium text-fg-muted">{seg.text}</span> : seg.text}
+              </Fragment>
+            ))}
+          </p>
         </div>
 
         {!isEmpty && (
