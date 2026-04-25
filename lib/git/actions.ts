@@ -288,6 +288,29 @@ function spawnGitStep(
 }
 
 /**
+ * Returns the args for `git push` for this branch. If the branch has no
+ * upstream configured, returns ["push", "-u", "origin", "HEAD"] so the
+ * branch publishes itself instead of failing with "no upstream branch."
+ * Otherwise plain ["push"]. Detached HEAD also gets plain push.
+ */
+async function buildPushArgs(repoPath: string, branch: string | null): Promise<string[]> {
+  if (!branch || branch === "(detached)") return ["push"];
+  try {
+    await execFileAsync(
+      "git",
+      ["-C", repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      { timeout: 5_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+    );
+    return ["push"];
+  } catch {
+    // No upstream — publish the branch to origin. The user already clicked
+    // Push so consent for "this leaves my machine" is established; the
+    // -u flag wires up tracking so subsequent pushes are plain pushes.
+    return ["push", "-u", "origin", "HEAD"];
+  }
+}
+
+/**
  * Reads the tracked remote name for the given branch from git config.
  * Priority: branch.<branch>.pushRemote → branch.<branch>.remote → "origin"
  * Returns null when the branch or remote cannot be determined (detached HEAD etc.).
@@ -414,7 +437,11 @@ async function executePush(run: ActionRun, repoPath: string, branch: string | nu
     return;
   }
 
-  const pushCode = await spawnGitStep(run, emit, ["push"], repoPath);
+  const pushArgs = await buildPushArgs(repoPath, branch);
+  if (pushArgs.length > 1) {
+    emit(`[gitdash] Branch '${branch}' isn't on GitHub yet. Publishing it now.`);
+  }
+  const pushCode = await spawnGitStep(run, emit, pushArgs, repoPath);
   if (pushCode !== 0) {
     emit(`[gitdash] ✗ ${friendlyStepLabel("push")} didn't complete (exit ${pushCode}).`);
     emitHint(emit, run.lines);
@@ -497,7 +524,11 @@ async function executeCommit(
   }
 
   // --- push ---
-  const pushCode = await spawnGitStep(run, emit, ["push"], repoPath);
+  const pushArgs = await buildPushArgs(repoPath, branch);
+  if (pushArgs.length > 1) {
+    emit(`[gitdash] Branch '${branch}' isn't on GitHub yet. Publishing it now.`);
+  }
+  const pushCode = await spawnGitStep(run, emit, pushArgs, repoPath);
   if (pushCode !== 0) {
     emit(`[gitdash] ✗ ${friendlyStepLabel("push")} didn't complete (exit ${pushCode}).`);
     emit("[gitdash] hint: Your commit was saved locally. Once you fix the push issue (often a GitHub auth problem), click the Push button on this row to retry.");

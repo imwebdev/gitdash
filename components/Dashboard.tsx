@@ -28,9 +28,12 @@ function groupFor(repo: RepoView): GroupKind {
   // (push / merge / commit-push) won't work on them. They go to their own
   // bucket so we don't tease the user with buttons that will fail.
   if (s === "read-only") return "read-only";
+  // 'gone' (repo missing on GitHub) lands in attention so the user notices
+  // and can fix the remote URL before doing more work that has nowhere to go.
+  if (s === "gone") return "attention";
   if (s === "weird") return "attention";
   if (s === "diverged") return "diverged";
-  if (s === "ahead") return "push";
+  if (s === "ahead" || s === "unpushed-branch") return "push";
   if (s === "behind") return "pull";
   if (s === "dirty") return "dirty";
   // Truly local repos (no upstream config at all) go to local-only so they
