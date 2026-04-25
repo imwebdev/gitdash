@@ -30,7 +30,10 @@ export function RemoteReposSection({ csrfToken, refreshKey = 0 }: Props) {
     "idle" | "loading" | "loaded" | "error"
   >("idle");
   const [errorBlock, setErrorBlock] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  // Collapsed by default — this is a secondary, exploratory section that
+  // sits below the actionable groups. Users who want to clone something
+  // will click in.
+  const [collapsed, setCollapsed] = useState(true);
 
   const load = useCallback(async () => {
     setLoadState("loading");
