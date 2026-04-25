@@ -210,3 +210,33 @@ export async function fetchOpenPrCount(slug: GitHubSlug): Promise<number | null>
     return null;
   }
 }
+
+/**
+ * Fetch the user's push permission on a GitHub repo.
+ * Returns:
+ *   - `true` if the user can push
+ *   - `false` if read-only (collaborator without write access, fork upstream, etc.)
+ *   - `null` if the API call fails (auth issue, 404, network), so callers can
+ *     COALESCE with the previously-stored value rather than wiping it.
+ */
+export async function fetchCanPush(slug: GitHubSlug): Promise<boolean | null> {
+  try {
+    const res = await runGh([
+      "api",
+      "--method",
+      "GET",
+      `repos/${slug.owner}/${slug.name}`,
+    ]);
+    const parsed = JSON.parse(res.stdout) as {
+      permissions?: { push?: boolean };
+    };
+    if (typeof parsed.permissions?.push === "boolean") {
+      return parsed.permissions.push;
+    }
+    // Endpoint returned but didn't include `permissions` (e.g. unauthenticated
+    // public-repo response). Treat as unknown rather than guessing read-only.
+    return null;
+  } catch {
+    return null;
+  }
+}

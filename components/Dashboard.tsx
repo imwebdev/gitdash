@@ -21,6 +21,10 @@ interface Group {
 
 function groupFor(repo: RepoView): GroupKind {
   const s = repo.derivedState;
+  // Read-only takes priority — these repos are real, but gitdash actions
+  // (push / merge / commit-push) won't work on them. They go to their own
+  // bucket so we don't tease the user with buttons that will fail.
+  if (s === "read-only") return "read-only";
   if (s === "weird") return "attention";
   if (s === "diverged") return "diverged";
   if (s === "ahead") return "push";
@@ -44,7 +48,7 @@ function buildGroups(repos: RepoView[]): { kind: GroupKind; headline: string; bo
     buckets.set(g, arr);
   }
 
-  const ordered: GroupKind[] = ["attention", "diverged", "push", "pull", "dirty", "clean"];
+  const ordered: GroupKind[] = ["attention", "diverged", "push", "pull", "dirty", "read-only", "clean"];
   // "clean" always renders (with an empty-state placeholder when count = 0)
   return ordered
     .filter((k) => k === "clean" || (buckets.get(k) ?? []).length > 0)
@@ -69,6 +73,7 @@ function headlineFor(kind: GroupKind, n: number): string {
     case "push": return `${plural === "repo" ? "wants" : "want"} to be pushed`;
     case "pull": return `${plural === "repo" ? "has" : "have"} incoming changes`;
     case "dirty": return `${plural === "repo" ? "has" : "have"} unsaved changes`;
+    case "read-only": return `read-only — you can't push here`;
     case "clean": return n === 0
       ? "no updates needed"
       : `${plural === "repo" ? "needs" : "need"} no updates`;
@@ -82,6 +87,7 @@ function bodyFor(kind: GroupKind, _n: number): string {
     case "push": return "You've committed work locally that GitHub doesn't have yet. Hit the button to send it up.";
     case "pull": return "Someone (possibly another machine of yours) pushed commits to GitHub. Download them to catch up.";
     case "dirty": return "Files you've edited but haven't committed. Click Open folder to see what changed and commit from your editor. Gitdash doesn't commit for you.";
+    case "read-only": return "Repos where your GitHub account doesn't have push access. They might have local edits — that's fine — but gitdash won't show push, merge, or commit-push buttons because they would just fail.";
     case "clean": return "These repos are in sync — nothing to push or pull. If a comparison is stale or you suspect the data is wrong, hit Fetch in the row's ⋯ menu to re-check.";
   }
 }

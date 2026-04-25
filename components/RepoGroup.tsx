@@ -23,6 +23,7 @@ const TINT: Record<GroupKind, string> = {
   diverged: "tint-diverged",
   attention: "tint-attention",
   dirty: "tint-dirty",
+  "read-only": "tint-clean",
   clean: "tint-clean",
 };
 
@@ -32,6 +33,7 @@ const ACCENT: Record<GroupKind, string> = {
   diverged: "text-accent-diverged",
   attention: "text-accent-attention",
   dirty: "text-accent-dirty",
+  "read-only": "text-fg-muted",
   clean: "text-accent-clean",
 };
 
