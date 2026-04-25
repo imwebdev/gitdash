@@ -4,6 +4,7 @@ import path from "node:path";
 import { bootstrap } from "@/lib/bootstrap";
 import { getRepoById } from "@/lib/db/repos";
 import { runGit } from "@/lib/git/exec";
+import { scanFiles, type SecretFinding } from "@/lib/security/secrets";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -101,10 +102,22 @@ export async function GET(
 
   const suspicious = entries.filter((e) => e.reason !== null);
 
+  // Run secret scan on the files that would be staged
+  let secretFindings: SecretFinding[] = [];
+  const relativePaths = entries
+    .filter((e) => e.status !== "D " && e.status !== " D" && e.status !== "DD")
+    .map((e) => e.path);
+  try {
+    secretFindings = await scanFiles(repo.repoPath, relativePaths);
+  } catch {
+    // best-effort — don't block the preview if scan errors
+  }
+
   return NextResponse.json({
     files: entries,
     total: chunks.length,
     suspicious,
     truncated,
+    secretFindings,
   });
 }

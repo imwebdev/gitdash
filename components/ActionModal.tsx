@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { RepoView } from "@/lib/state/store";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, ShieldAlert, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const FOCUSABLE_SELECTOR =
@@ -41,11 +41,20 @@ interface ChangeEntry {
   reason: "secret" | "large" | null;
 }
 
+interface SecretFinding {
+  filePath: string;
+  line: number;
+  ruleId: string;
+  ruleName: string;
+  snippet: string;
+}
+
 interface ChangesResponse {
   files: ChangeEntry[];
   total: number;
   suspicious: ChangeEntry[];
   truncated: boolean;
+  secretFindings: SecretFinding[];
 }
 
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
@@ -63,6 +72,8 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const [commitMessage, setCommitMessage] = useState<string>("");
   const [changes, setChanges] = useState<ChangesResponse | null>(null);
   const [changesLoading, setChangesLoading] = useState(isCommitPush);
+  const [overrideConfirm, setOverrideConfirm] = useState<string>("");
+  const [securityOverride, setSecurityOverride] = useState(false);
   const [mounted, setMounted] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -172,13 +183,28 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
 
     async function run() {
       try {
-        const body = isCommitPush ? { commitMessage: commitMessage.trim() } : {};
+        const body = isCommitPush
+          ? {
+              commitMessage: commitMessage.trim(),
+              ...(securityOverride ? { securityOverride: true } : {}),
+            }
+          : {};
         const res = await fetch(`/api/repos/${repo.id}/actions/${action}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
           body: JSON.stringify(body),
         });
         if (!res.ok) {
+          if (res.status === 422) {
+            // Secret scan blocked the commit — should not normally reach here
+            // because the confirm screen gates on the override, but handle defensively.
+            const data = (await res.json()) as { error: string; findings?: unknown };
+            if (!cancelled) {
+              setLog((l) => [...l, `[secret-scan] blocked: ${data.error}`]);
+              setPhase("error");
+            }
+            return;
+          }
           const text = await res.text();
           if (!cancelled) {
             setLog((l) => [...l, `HTTP ${res.status}: ${text}`]);
@@ -217,7 +243,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
       cancelled = true;
       esRef.current?.close();
     };
-  }, [phase, action, repo.id, csrfToken, isCommitPush, commitMessage]);
+  }, [phase, action, repo.id, csrfToken, isCommitPush, commitMessage, securityOverride]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -265,8 +291,16 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
             loading={changesLoading}
             commitMessage={commitMessage}
             onMessageChange={setCommitMessage}
+            overrideConfirm={overrideConfirm}
+            onOverrideConfirmChange={setOverrideConfirm}
             onCancel={onClose}
-            onConfirm={() => setPhase("running")}
+            onConfirm={() => {
+              const secretFindings = changes?.secretFindings ?? [];
+              if (secretFindings.length > 0 && overrideConfirm === "override") {
+                setSecurityOverride(true);
+              }
+              setPhase("running");
+            }}
           />
         )}
 
@@ -340,6 +374,8 @@ function CommitPushConfirm({
   loading,
   commitMessage,
   onMessageChange,
+  overrideConfirm,
+  onOverrideConfirmChange,
   onCancel,
   onConfirm,
 }: {
@@ -347,11 +383,17 @@ function CommitPushConfirm({
   loading: boolean;
   commitMessage: string;
   onMessageChange: (v: string) => void;
+  overrideConfirm: string;
+  onOverrideConfirmChange: (v: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const total = changes?.total ?? 0;
   const suspicious = changes?.suspicious ?? [];
+  const secretFindings = changes?.secretFindings ?? [];
+  const hasSecrets = secretFindings.length > 0;
+  // Override is confirmed only when the user types the exact word "override"
+  const overrideReady = !hasSecrets || overrideConfirm === "override";
 
   return (
     <div className="flex flex-col gap-5 overflow-y-auto px-6 py-6">
@@ -404,6 +446,46 @@ function CommitPushConfirm({
               </div>
             </div>
           )}
+
+          {hasSecrets && (
+            <div className="flex gap-3 rounded-lg border border-red-500/50 bg-red-500/10 p-4">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+              <div className="w-full text-[12.5px] text-fg-muted">
+                <p className="font-semibold text-red-400">
+                  Secret scan detected {secretFindings.length} potential secret{secretFindings.length === 1 ? "" : "s"}
+                </p>
+                <ul className="mt-2 space-y-1.5 mono text-[11px]">
+                  {secretFindings.slice(0, 8).map((f, i) => (
+                    <li key={i} className="flex flex-col gap-0.5">
+                      <span className="text-red-300">
+                        {f.filePath}:{f.line} — <span className="font-medium">{f.ruleName}</span>
+                      </span>
+                      <span className="text-fg-dim truncate">{f.snippet}</span>
+                    </li>
+                  ))}
+                  {secretFindings.length > 8 && (
+                    <li className="text-fg-dim">…and {secretFindings.length - 8} more</li>
+                  )}
+                </ul>
+                <p className="mt-3 text-[11.5px] text-fg-muted">
+                  Pushing secrets to GitHub can expose credentials publicly and may not be reversible. Remove the secrets, then commit.
+                </p>
+                <label className="mt-3 flex flex-col gap-1.5">
+                  <span className="text-[11px] uppercase tracking-wider text-red-400">
+                    Type <span className="mono font-bold">override</span> to commit anyway (not recommended)
+                  </span>
+                  <input
+                    type="text"
+                    value={overrideConfirm}
+                    onChange={(e) => onOverrideConfirmChange(e.target.value)}
+                    placeholder="override"
+                    autoComplete="off"
+                    className="rounded-lg border border-red-500/40 bg-red-500/5 px-3 py-1.5 text-[13px] text-red-300 placeholder:text-fg-dim focus:border-red-400 focus:outline-none"
+                  />
+                </label>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -431,10 +513,12 @@ function CommitPushConfirm({
         </button>
         <button
           onClick={onConfirm}
-          disabled={!loading && total === 0}
+          disabled={(!loading && total === 0) || !overrideReady}
           className={cn(
             "rounded-full border px-5 py-1.5 text-[13px] font-medium transition-all",
-            "border-accent-push/45 bg-accent-push/15 text-accent-push hover:bg-accent-push/25",
+            hasSecrets && !overrideReady
+              ? "border-red-500/30 bg-red-500/10 text-red-400 cursor-not-allowed opacity-40"
+              : "border-accent-push/45 bg-accent-push/15 text-accent-push hover:bg-accent-push/25",
             "disabled:cursor-not-allowed disabled:opacity-40",
           )}
         >
