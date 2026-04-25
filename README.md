@@ -138,7 +138,7 @@ Every repo on your machine, sorted by what it needs:
 ## 🔄 Update gitdash
 
 ```bash
-cd /path/to/gitdash && git pull && ./install.sh
+cd gitdash && git pull && ./install.sh
 ```
 
 Re-running the installer is safe — it stops, rebuilds, and restarts cleanly.
@@ -148,8 +148,8 @@ Re-running the installer is safe — it stops, rebuilds, and restarts cleanly.
 ## 🗑️ Remove gitdash
 
 ```bash
-cd /path/to/gitdash && ./uninstall.sh           # service only
-cd /path/to/gitdash && ./uninstall.sh --purge   # also wipe the database
+cd gitdash && ./uninstall.sh           # service only
+cd gitdash && ./uninstall.sh --purge   # also wipe the database
 ```
 
 The repo files stay where they are — delete them yourself if you want.
