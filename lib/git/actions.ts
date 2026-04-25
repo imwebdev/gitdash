@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { assertSafeRef } from "./exec";
+import { translateGitError, friendlyStepLabel } from "./error-hints";
 import { getDb } from "@/lib/db/schema";
 
 export type ActionName =
@@ -133,6 +134,37 @@ function sanitizeCommitMessage(input: string | undefined): string {
   return raw.replace(/\r\n?/g, "\n").slice(0, 5000);
 }
 
+function emitHint(emit: (text: string) => void, lines: readonly string[]): void {
+  const result = translateGitError(lines);
+  if (!result) return;
+  for (const line of result.hint.split("\n")) {
+    emit(`[gitdash] hint: ${line}`);
+  }
+}
+
+function friendlyActionLabel(action: ActionName): string {
+  switch (action) {
+    case "fetch":
+      return "Fetch";
+    case "pull":
+      return "Pull";
+    case "push":
+      return "Push";
+    case "merge":
+      return "Merge";
+    case "stash-push":
+      return "Stash";
+    case "stash-pop":
+      return "Stash pop";
+    case "open-editor":
+      return "Open editor";
+    case "open-terminal":
+      return "Open terminal";
+    case "commit-push":
+      return "Commit & push";
+  }
+}
+
 function recordRunFinish(run: ActionRun): void {
   const truncated = run.lines.slice(-200).join("\n");
   try {
@@ -201,7 +233,8 @@ async function executeCommitPush(run: ActionRun, repoPath: string, message: stri
         run.emitter.emit("done", { exitCode: 0 });
         return;
       }
-      emit(`[gitdash] step '${step.label}' failed (exit ${code}); aborting`);
+      emit(`[gitdash] ✗ ${friendlyStepLabel(step.label)} didn't complete (exit ${code}).`);
+      emitHint(emit, run.lines);
       run.finishedAt = Date.now();
       run.exitCode = code;
       recordRunFinish(run);
@@ -274,6 +307,10 @@ function executeRun(run: ActionRun, executable: string, args: string[], cwd?: st
     clearTimeout(timer);
     run.finishedAt = Date.now();
     run.exitCode = code ?? -1;
+    if (run.exitCode !== 0) {
+      emit(`[gitdash] ✗ ${friendlyActionLabel(run.action)} didn't complete (exit ${run.exitCode}).`);
+      emitHint(emit, run.lines);
+    }
     const truncated = run.lines.slice(-200).join("\n");
     getDb().prepare(
       "UPDATE actions_log SET finished_at = ?, exit_code = ?, truncated_output = ? WHERE repo_id = ? AND started_at = ?",
@@ -284,6 +321,15 @@ function executeRun(run: ActionRun, executable: string, args: string[], cwd?: st
   child.on("error", (err) => {
     clearTimeout(timer);
     emit(`[error] ${err.message}`);
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (run.action === "open-editor") {
+        emit(`[gitdash] hint: gitdash couldn't launch your editor (${executable}). Set GITDASH_EDITOR to the command for your editor (e.g. 'code', 'subl', 'cursor').`);
+      } else if (run.action === "open-terminal") {
+        emit(`[gitdash] hint: gitdash couldn't launch your terminal (${executable}). Set GITDASH_TERMINAL to the command for your terminal.`);
+      } else {
+        emit(`[gitdash] hint: '${executable}' isn't installed or isn't on PATH for the gitdash process.`);
+      }
+    }
     run.finishedAt = Date.now();
     run.exitCode = -1;
     run.emitter.emit("done", { exitCode: -1 });
