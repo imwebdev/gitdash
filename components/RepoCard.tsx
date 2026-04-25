@@ -503,12 +503,12 @@ function RowIcons({
             "inline-flex h-11 w-11 items-center justify-center rounded-full transition-colors sm:h-7 sm:w-7",
             refreshState === "error" && "text-accent-attention",
             refreshState === "rate-limited" && "text-fg-dim opacity-50 cursor-not-allowed",
-            refreshState === "idle" && "text-fg-dim hover:bg-bg-hover hover:text-fg",
-            refreshState === "spinning" && "cursor-wait text-fg-dim",
+            refreshState === "idle" && "text-fg hover:bg-bg-hover",
+            refreshState === "spinning" && "cursor-wait text-fg",
           )}
         >
           <RefreshCw
-            className={cn("h-3.5 w-3.5", refreshState === "spinning" && "animate-spin")}
+            className={cn("h-4 w-4", refreshState === "spinning" && "animate-spin")}
           />
         </button>
       </div>
