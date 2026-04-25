@@ -65,6 +65,16 @@ async function fetchRemoteSha(slug: GitHubSlug, branch: string): Promise<{ sha: 
   } catch (err) {
     const e = err as { stderr?: string };
     const stderr = e.stderr ?? "";
+    // gh CLI exits 1 on 304 even though it's a successful cache hit.
+    if (/\b304\b/.test(stderr) && cached) {
+      try {
+        const parsed = JSON.parse(cached.body_json) as { sha?: string };
+        if (parsed.sha) return { sha: parsed.sha, fromCache: true };
+      } catch {
+        return null;
+      }
+      return null;
+    }
     if (/404/.test(stderr)) return null;
     if (/403/.test(stderr) && cached) {
       try {
@@ -174,8 +184,21 @@ export async function compareWithRemote(
       if (parsed.etag) writeCache(compareKey, parsed.etag, parsed.body, now);
       return comparisonFromBody(body, remote.sha, localSha, now);
     }
-  } catch {
-    // fallthrough
+  } catch (err) {
+    // gh CLI exits 1 on 304 even though it's a successful cache hit.
+    const stderr = (err as { stderr?: string }).stderr ?? "";
+    if (/\b304\b/.test(stderr) && cachedCmp) {
+      try {
+        const body = JSON.parse(cachedCmp.body_json) as {
+          ahead_by?: number;
+          behind_by?: number;
+          status?: string;
+        };
+        return comparisonFromBody(body, remote.sha, localSha, now);
+      } catch {
+        // fall through
+      }
+    }
   }
   return { state: "unknown", ahead: 0, behind: 0, remoteSha: remote.sha, localSha, checkedAt: now };
 }
