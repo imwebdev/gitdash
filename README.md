@@ -6,17 +6,17 @@
 
 ---
 
-## ⚡ Install
+## ⚡ Install & uninstall
 
-**Pick your operating system and follow only the steps in that section.**
+**Pick your operating system and follow only the steps in that section.** Each section bundles Install and Uninstall together — no hunting around.
 
-- [🐧 Linux — install](#-linux--install)
-- [🪟 Windows — install](#-windows--install)
-- [🍎 macOS — install](#-macos--install)
+- [🐧 Linux](#-linux)
+- [🪟 Windows](#-windows)
+- [🍎 macOS](#-macos)
 
 ---
 
-## 🐧 Linux — install
+## 🐧 Linux
 
 Works on Ubuntu, Debian, Fedora, Arch, and most other mainstream distros.
 
@@ -43,7 +43,7 @@ Look at your prompt right now:
 - Windows → [🪟 Windows — install](#-windows--install)
 - macOS → [🍎 macOS — install](#-macos--install)
 
-### Paste one of these at your Linux prompt
+### Install
 
 **Quick install (recommended):**
 
@@ -61,11 +61,27 @@ The installer prints a URL when it's done — open it in your browser.
 
 > ❓ Missing `git`, `node 20+`, or `gh`? See [Prereqs](#-prereqs).
 
+### Uninstall
+
+Stops the service, removes the launcher. Source clone is left in place.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh) --purge   # also wipe DB + config
+```
+
+Or if you have the source clone:
+
+```bash
+cd ~/gitdash && ./uninstall.sh           # service only
+cd ~/gitdash && ./uninstall.sh --purge   # also wipe the database
+```
+
 ---
 
-## 🪟 Windows — install
+## 🪟 Windows
 
-### One command. Paste into PowerShell.
+### Install
 
 Open **PowerShell** (press `Win + R`, type `powershell`, press Enter) and paste this:
 
@@ -79,6 +95,23 @@ That's it. The script handles everything:
 2. After you reboot and Ubuntu is set up (it asks for a Linux username + password the first time), **paste the same PowerShell command again**. It will detect WSL is ready and install gitdash.
 3. When it's done, open a new PowerShell window, type `wsl`, then type `gitdash start`, and open http://127.0.0.1:7420 in any Windows browser.
 
+### Uninstall
+
+Removes the `gitdash.cmd` shim from `%LOCALAPPDATA%\gitdash`, strips it from your user PATH, and runs the bash uninstaller inside WSL.
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.ps1 | iex
+```
+
+To also wipe the WSL-side config + SQLite database:
+
+```powershell
+$env:GITDASH_PURGE='1'
+iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.ps1 | iex
+```
+
+It does **not** `wsl --unregister Ubuntu` — that would nuke anything else you've put in WSL. Run that yourself if you want the distro itself gone.
+
 ### Common errors you can ignore now
 
 If you previously tried the Linux command in PowerShell and got `The token '&&' is not a valid statement separator` or `The '<' operator is reserved for future use` — that's PowerShell rejecting bash syntax. Use the PowerShell command above instead. It's native PowerShell and paste-safe.
@@ -89,7 +122,9 @@ gitdash uses Linux-only features (`systemd`, bash scripts). It can't run on Wind
 
 ---
 
-## 🍎 macOS — install
+## 🍎 macOS
+
+### Install
 
 Open **Terminal** (⌘+Space → type "Terminal" → Enter) and paste:
 
@@ -106,6 +141,15 @@ gitdash start
 ```
 
 …then open http://127.0.0.1:7420 in Safari / Chrome / Arc / whatever.
+
+### Uninstall
+
+Stops any running `gitdash start` process, removes `~/.local/bin/gitdash`, leaves the source clone alone.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh) --purge   # also wipe DB + config
+```
 
 ### macOS limitations today
 
@@ -144,52 +188,6 @@ cd gitdash && git pull && ./install.sh
 Re-running the installer is safe — it stops, rebuilds, and restarts cleanly.
 
 Any browser tab already open on the dashboard will detect the new version within 30 seconds and show a **"new version available — reload"** banner. No manual hard-refresh needed.
-
----
-
-## 🗑️ Remove gitdash
-
-Pick the section for your OS — same idea as install. Each one-liner stops gitdash, removes the launcher, and leaves your source clone in place. Add `--purge` (Linux/macOS) or `$env:GITDASH_PURGE='1'` (Windows) to also wipe the SQLite database + config.
-
-### 🐧 Linux
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh)
-bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh) --purge
-```
-
-Or if you have the source clone:
-
-```bash
-cd ~/gitdash && ./uninstall.sh           # service only
-cd ~/gitdash && ./uninstall.sh --purge   # also wipe the database
-```
-
-### 🍎 macOS
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh)
-bash <(curl -fsSL https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.sh) --purge
-```
-
-Stops any running `gitdash start` process, removes `~/.local/bin/gitdash`, leaves the clone alone.
-
-### 🪟 Windows
-
-```powershell
-iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.ps1 | iex
-```
-
-Removes the `gitdash.cmd` shim from `%LOCALAPPDATA%\gitdash`, strips it from your user PATH, and runs the bash uninstaller inside WSL. To also wipe the WSL-side config + database:
-
-```powershell
-$env:GITDASH_PURGE='1'
-iwr -useb https://raw.githubusercontent.com/imwebdev/gitdash/main/scripts/quick-uninstall.ps1 | iex
-```
-
-It does **not** `wsl --unregister Ubuntu` — that would nuke anything else you've put in WSL. If you want the WSL distro itself gone, run that command yourself.
-
-The repo files stay where they are — delete them yourself if you want gitdash entirely off the disk.
 
 ---
 
