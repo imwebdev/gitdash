@@ -41,7 +41,9 @@ interface StartOptions {
   action: ActionName;
   branch: string | null;
   commitMessage?: string;
+  securityOverride?: boolean;
 }
+
 
 export function startAction(opts: StartOptions): ActionRun {
   const runId = randomUUID();
@@ -62,8 +64,9 @@ export function startAction(opts: StartOptions): ActionRun {
 
   if (opts.action === "commit-push") {
     const message = sanitizeCommitMessage(opts.commitMessage);
+    const securityOverride = opts.securityOverride === true;
     setImmediate(() => {
-      executeCommitPush(run, opts.repoPath, message).catch((err) => {
+      executeCommitPush(run, opts.repoPath, message, securityOverride).catch((err) => {
         run.emitter.emit("done", { exitCode: -1 });
         run.exitCode = -1;
         run.finishedAt = Date.now();
@@ -176,11 +179,19 @@ function recordRunFinish(run: ActionRun): void {
   }
 }
 
-async function executeCommitPush(run: ActionRun, repoPath: string, message: string): Promise<void> {
+async function executeCommitPush(run: ActionRun, repoPath: string, message: string, securityOverride: boolean): Promise<void> {
   const emit = (text: string) => {
     run.lines.push(text);
     run.emitter.emit("line", text);
   };
+
+  // Secret scan already ran in the action route before this point.
+  // If securityOverride is true, the route confirmed the user acknowledged the risk.
+  if (securityOverride) {
+    emit("[secret-scan] ⚠ override — proceeding past secret findings as confirmed by user");
+  } else {
+    emit("[secret-scan] ✓ passed");
+  }
 
   const steps: { label: string; args: string[] }[] = [
     { label: "stage", args: ["add", "-A"] },
