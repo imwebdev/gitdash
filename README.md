@@ -77,7 +77,7 @@ That's it. The script handles everything:
 
 1. **First run** — If WSL (the Linux layer Windows uses) isn't installed, the script installs it: Windows will ask for admin permission (click **Yes** on the UAC prompt), then `wsl --install` runs and tells you to reboot.
 2. **After the reboot** — Paste the **same** PowerShell command again. The script then installs Ubuntu, opens an Ubuntu window so you can set your Linux username + password, and **continues installing gitdash automatically** as soon as Ubuntu is ready. No further pastes required.
-3. **When it's done** — open a new PowerShell window, type `wsl`, then type `gitdash start`, and open http://127.0.0.1:7420 in any Windows browser.
+3. **When it's done** — gitdash starts automatically and your browser opens to http://127.0.0.1:7420. To start it manually later, just type `gitdash start` in any PowerShell window.
 
 ### Common errors you can ignore now
 

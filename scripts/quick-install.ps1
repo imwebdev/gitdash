@@ -9,7 +9,10 @@
 #   3. If WSL is installed but no Linux distro: installs Ubuntu, waits for the user
 #      to finish setting their Linux username/password, then auto-continues
 #   4. Runs the Linux quick-install.sh inside WSL
-#   5. Leaves you with a `gitdash` command inside WSL
+#   5. Drops a `gitdash.cmd` shim into %LOCALAPPDATA%\gitdash and adds it to
+#      the user PATH, so `gitdash` works directly from any PowerShell window
+#   6. Auto-starts the gitdash daemon and opens http://127.0.0.1:7420 in the
+#      default browser - the "one click" payoff
 
 $ErrorActionPreference = 'Stop'
 
@@ -176,16 +179,71 @@ if ($exitCode -ne 0) {
 }
 
 # -----------------------------------------------------------------------------
+# Step 4: Install Windows-side `gitdash` launcher shim so users don't have to
+# manually `wsl` first. Drops a .cmd file into %LOCALAPPDATA%\gitdash\ and
+# adds that directory to the user PATH + current session PATH.
+# -----------------------------------------------------------------------------
+Write-Step "Installing Windows launcher shim (gitdash.cmd)"
+
+$shimDir  = Join-Path $env:LOCALAPPDATA 'gitdash'
+$shimPath = Join-Path $shimDir 'gitdash.cmd'
+
+New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
+
+# The shim forwards every argument verbatim to the gitdash binary inside the
+# default WSL distro. Using `wsl --` (no `-d`) means it works for whatever
+# distro the user actually has, not just Ubuntu.
+$shimContent = @'
+@echo off
+wsl -- gitdash %*
+'@
+Set-Content -Path $shimPath -Value $shimContent -Encoding ASCII
+Write-Ok "Shim written to $shimPath"
+
+# Add shim dir to the persistent user PATH (so future shells see it)
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (-not $userPath) { $userPath = '' }
+$pathEntries = $userPath -split ';' | Where-Object { $_ -ne '' }
+if ($pathEntries -notcontains $shimDir) {
+    $newUserPath = if ($userPath) { "$userPath;$shimDir" } else { $shimDir }
+    [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+    Write-Ok "Added $shimDir to your user PATH"
+} else {
+    Write-Ok "User PATH already contains $shimDir"
+}
+
+# Also patch the *current* shell's PATH so `gitdash` works without reopening
+if (($env:Path -split ';') -notcontains $shimDir) {
+    $env:Path = "$env:Path;$shimDir"
+}
+
+# -----------------------------------------------------------------------------
+# Step 5: Auto-start gitdash and open the browser - this is the "one click"
+# payoff. We launch the daemon in a detached process and open the dashboard.
+# -----------------------------------------------------------------------------
+Write-Step "Starting gitdash"
+
+# Run `gitdash start` detached so this script can finish and the browser opens
+# while the daemon is still running.
+Start-Process -FilePath $shimPath -ArgumentList 'start' -WindowStyle Hidden | Out-Null
+
+# Give the service a moment to bind its port before we open the browser.
+Start-Sleep -Seconds 3
+Start-Process 'http://127.0.0.1:7420' | Out-Null
+
+# -----------------------------------------------------------------------------
 # Done
 # -----------------------------------------------------------------------------
 Write-Host ""
 Write-Host "================================" -ForegroundColor Green
-Write-Host "  gitdash is installed in WSL   " -ForegroundColor Green
+Write-Host "  gitdash is installed          " -ForegroundColor Green
 Write-Host "================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "To start gitdash:"
-Write-Host "  1. Open a new PowerShell window"
-Write-Host "  2. Type:  wsl"
-Write-Host "  3. Inside Linux, type:  gitdash start"
-Write-Host "  4. Open http://127.0.0.1:7420 in any Windows browser"
+Write-Host "Your browser should be opening to http://127.0.0.1:7420 now."
+Write-Host ""
+Write-Host "From now on you can manage gitdash from any PowerShell window with:"
+Write-Host "  gitdash start    # start the dashboard"
+Write-Host "  gitdash status   # check service state"
+Write-Host ""
+Write-Host "If the browser didn't open, visit http://127.0.0.1:7420 manually."
 Write-Host ""
