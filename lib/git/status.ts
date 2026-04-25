@@ -100,13 +100,44 @@ export function parsePorcelainV2(raw: string): LocalStatus {
   };
 }
 
+/**
+ * Resolves the URL of the remote that `git push` would target for the given
+ * branch. Mirrors git's own resolution order:
+ *   branch.<name>.pushRemote → branch.<name>.remote → "origin"
+ *
+ * Falls back to remote.origin.url for detached HEAD or when no branch-level
+ * config exists. Returns null when the resolved remote isn't configured.
+ *
+ * Inputs come from a single `git config --list` dump so the whole resolution
+ * runs without extra subprocess calls. Section + variable names are
+ * normalized lowercase by --list; the subsection (branch / remote name) is
+ * case-sensitive per git's config rules.
+ */
+export function resolveTrackedRemoteUrl(configDump: string, branch: string | null): string | null {
+  const map = new Map<string, string>();
+  for (const line of configDump.split("\n")) {
+    const idx = line.indexOf("=");
+    if (idx === -1) continue;
+    map.set(line.slice(0, idx), line.slice(idx + 1));
+  }
+
+  let remoteName = "origin";
+  if (branch) {
+    const pushRemote = map.get(`branch.${branch}.pushremote`);
+    const remote = map.get(`branch.${branch}.remote`);
+    remoteName = pushRemote ?? remote ?? "origin";
+  }
+
+  return map.get(`remote.${remoteName}.url`) ?? null;
+}
+
 export interface CollectSnapshotOptions {
   path: string;
   timeoutMs?: number;
 }
 
 export async function collectSnapshot({ path: repoPath, timeoutMs = 15_000 }: CollectSnapshotOptions): Promise<RepoSnapshot> {
-  const [statusRes, logRes, remoteRes] = await Promise.allSettled([
+  const [statusRes, logRes, configRes] = await Promise.allSettled([
     runGit(["status", "--porcelain=v2", "--branch", "--untracked-files=normal"], {
       cwd: repoPath,
       mode: "read",
@@ -117,7 +148,12 @@ export async function collectSnapshot({ path: repoPath, timeoutMs = 15_000 }: Co
       mode: "read",
       timeoutMs,
     }),
-    runGit(["config", "--get", "remote.origin.url"], {
+    // Pull the whole config in one shot so we can resolve the *actual*
+    // push target (branch.<name>.pushRemote → branch.<name>.remote →
+    // origin) instead of assuming origin. Otherwise a fork that tracks
+    // upstream gets origin's permissions queried, push button shows up,
+    // and the push 403s — see issue #120.
+    runGit(["config", "--list"], {
       cwd: repoPath,
       mode: "read",
       timeoutMs,
@@ -140,8 +176,8 @@ export async function collectSnapshot({ path: repoPath, timeoutMs = 15_000 }: Co
     }
   }
 
-  const remoteUrl = remoteRes.status === "fulfilled"
-    ? remoteRes.value.stdout.trim() || null
+  const remoteUrl = configRes.status === "fulfilled"
+    ? resolveTrackedRemoteUrl(configRes.value.stdout, status.branch)
     : null;
 
   if (status.upstream && status.upstreamSha === null) {
