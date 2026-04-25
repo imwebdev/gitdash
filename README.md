@@ -143,6 +143,8 @@ cd gitdash && git pull && ./install.sh
 
 Re-running the installer is safe — it stops, rebuilds, and restarts cleanly.
 
+Any browser tab already open on the dashboard will detect the new version within 30 seconds and show a **"new version available — reload"** banner. No manual hard-refresh needed.
+
 ---
 
 ## 🗑️ Remove gitdash
