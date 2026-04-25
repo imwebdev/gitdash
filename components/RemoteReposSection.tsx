@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { RemoteRepoCard, type RemoteRepoView } from "./RemoteRepoCard";
-import { ChevronDown } from "lucide-react";
+import { GhSignInModal } from "./GhSignInModal";
+import { ChevronDown, Github } from "lucide-react";
 
 interface ApiPayload {
   repos: RemoteRepoView[];
@@ -11,6 +12,24 @@ interface ApiPayload {
   error?: string;
   detail?: string;
   hint?: string;
+}
+
+// Heuristics for detecting "you need to sign in to GitHub" from the various
+// error shapes `gh` and the route can return. We treat these as a sign-in
+// problem (button) rather than a generic failure (cryptic pre block).
+function looksLikeAuthFailure(payload: ApiPayload): boolean {
+  const haystack = [payload.error, payload.detail, payload.hint]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (!haystack) return false;
+  return (
+    haystack.includes("gh repo list failed") ||
+    haystack.includes("gh auth") ||
+    haystack.includes("not logged in") ||
+    haystack.includes("authentication required") ||
+    haystack.includes("unauthorized")
+  );
 }
 
 interface Props {
@@ -27,9 +46,10 @@ export function RemoteReposSection({ csrfToken, refreshKey = 0 }: Props) {
   const [repos, setRepos] = useState<RemoteRepoView[]>([]);
   const [cloneDir, setCloneDir] = useState<string>("~/repos");
   const [loadState, setLoadState] = useState<
-    "idle" | "loading" | "loaded" | "error"
+    "idle" | "loading" | "loaded" | "error" | "needs-auth"
   >("idle");
   const [errorBlock, setErrorBlock] = useState<string | null>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
   // Collapsed by default — this is a secondary, exploratory section that
   // sits below the actionable groups. Users who want to clone something
   // will click in.
@@ -42,6 +62,13 @@ export function RemoteReposSection({ csrfToken, refreshKey = 0 }: Props) {
       const res = await fetch("/api/github/repos");
       const payload = (await res.json()) as ApiPayload;
       if (!res.ok) {
+        if (looksLikeAuthFailure(payload)) {
+          // No CLI hand-off: surface a single "Sign in to GitHub" button.
+          // Auto-expand so the button is visible without needing a click.
+          setLoadState("needs-auth");
+          setCollapsed(false);
+          return;
+        }
         setErrorBlock(
           [payload.error ?? "GitHub API failed", payload.hint, payload.detail]
             .filter(Boolean)
@@ -113,6 +140,22 @@ export function RemoteReposSection({ csrfToken, refreshKey = 0 }: Props) {
             </p>
           )}
 
+          {loadState === "needs-auth" && (
+            <div className="mt-3 flex flex-col items-start gap-3 rounded-xl border border-border bg-bg/40 p-4">
+              <p className="text-[14px] text-fg">
+                Sign in to GitHub to see repos you can clone.
+              </p>
+              <button
+                type="button"
+                onClick={() => setSignInOpen(true)}
+                className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+              >
+                <Github className="h-4 w-4" />
+                Sign in to GitHub
+              </button>
+            </div>
+          )}
+
           {loadState === "error" && (
             <pre className="mono mt-3 whitespace-pre-wrap rounded bg-bg-elevated/80 p-3 text-[12px] text-accent-attention">
               {errorBlock}
@@ -140,6 +183,18 @@ export function RemoteReposSection({ csrfToken, refreshKey = 0 }: Props) {
             ))}
           </div>
         </>
+      )}
+
+      {signInOpen && (
+        <GhSignInModal
+          csrfToken={csrfToken}
+          onClose={() => setSignInOpen(false)}
+          onSuccess={() => {
+            // After successful auth, reload the repo list. The modal stays
+            // open showing "Done" until the user dismisses it.
+            void load();
+          }}
+        />
       )}
     </section>
   );
