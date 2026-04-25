@@ -311,6 +311,22 @@ build_gitdash() {
   (cd "$INSTALL_DIR" && npm install --no-audit --no-fund --silent)
   ok "dependencies installed"
 
+  # Rebuild native modules against the current node. Prevents
+  # NODE_MODULE_VERSION mismatches when, for example, a cached
+  # node_modules from a previous install was built for a different node.
+  step "Rebuilding native modules against $(node --version)"
+  (cd "$INSTALL_DIR" && npm rebuild --silent better-sqlite3 2>/dev/null) \
+    || (cd "$INSTALL_DIR" && npm rebuild better-sqlite3) \
+    || warn "npm rebuild better-sqlite3 failed — the service may crash on startup"
+
+  # Sanity check: can node actually load the compiled native binding?
+  # Catches the ABI mismatch up-front instead of at request time.
+  if (cd "$INSTALL_DIR" && node -e 'require("better-sqlite3")' 2>/dev/null); then
+    ok "better-sqlite3 loads cleanly under $(node --version)"
+  else
+    warn "better-sqlite3 failed to load — see: cd $INSTALL_DIR && node -e 'require(\"better-sqlite3\")'"
+  fi
+
   step "Building"
   (cd "$INSTALL_DIR" && npm run build --silent)
   ok "build complete"
@@ -423,6 +439,45 @@ EOF
     warn "systemctl --user enable --now gitdash failed — falling back to foreground"
     return 1
   fi
+}
+
+# Poll the dashboard URL until it responds 200, or bail with the real error.
+# Runs after systemd starts the service. Catches the class of bug where the
+# service "started" from systemd's view but crashes on the first request
+# (e.g. native-module ABI mismatch, unreadable DB path, bad env).
+healthcheck_service() {
+  local port="${GITDASH_PORT:-7420}"
+  local url="http://127.0.0.1:${port}/"
+  local deadline=$(( $(date +%s) + 25 ))
+  local body http_code
+
+  step "Waiting for dashboard to respond at $url"
+
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    http_code="$(curl -o /dev/null -s -w '%{http_code}' --max-time 3 "$url" || true)"
+    case "$http_code" in
+      200) ok "dashboard responded 200"; return 0 ;;
+      # 4xx means the server is up but refused the request — still a pass
+      # for health purposes; host-header validation may return 403 for
+      # 127.0.0.1 in some edge setups, but a successful render would too.
+      200|204|301|302|403) ok "dashboard responded $http_code"; return 0 ;;
+      500|502|503|504|000) ;; # keep polling; might just be warming up
+      *) ;;
+    esac
+    sleep 1
+  done
+
+  fail "dashboard did not respond cleanly within 25s (last HTTP code: ${http_code:-none})"
+  echo
+  echo "  Last 30 lines from the service log:"
+  echo "  ---"
+  journalctl --user -u gitdash -n 30 --no-pager 2>&1 | sed 's/^/  /'
+  echo "  ---"
+  echo
+  echo "  Diagnose further:"
+  echo "    systemctl --user status gitdash"
+  echo "    journalctl --user -u gitdash -f"
+  return 1
 }
 
 # Enable lingering so the service survives logout + auto-starts on boot.
@@ -558,8 +613,18 @@ main() {
   if [ "$os" = "linux" ] && setup_systemd_service; then
     enable_linger_if_wanted
     allow_ufw_port
-    print_next_steps_systemd
-    return 0
+
+    # Confirm the service actually works before we tell the user "you're done".
+    # A green systemctl enable doesn't mean the app serves requests.
+    if healthcheck_service; then
+      print_next_steps_systemd
+      return 0
+    else
+      fail "gitdash service started but is not serving requests"
+      echo "  Leaving the service installed so you can inspect logs; fix the"
+      echo "  underlying issue and restart with:  systemctl --user restart gitdash"
+      return 1
+    fi
   fi
 
   print_next_steps_foreground

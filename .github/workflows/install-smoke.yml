@@ -1,0 +1,104 @@
+name: install-smoke
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/quick-install.sh'
+      - 'scripts/gitdash.service'
+      - 'bin/gitdash'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/install-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/quick-install.sh'
+      - 'scripts/gitdash.service'
+      - 'bin/gitdash'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/install-smoke.yml'
+  workflow_dispatch:
+
+# A single run at a time per ref — this suite is slow and doesn't need to pile up.
+concurrency:
+  group: install-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu-2204:
+    name: Ubuntu 22.04 — clean quick-install
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install minimum prereqs (git already present on runners)
+        run: |
+          set -euxo pipefail
+          # Install gh from GitHub's official apt repo
+          (type -p wget >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y wget))
+          sudo mkdir -p -m 755 /etc/apt/keyrings
+          wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
+          sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y gh
+
+      - name: Use Node 20 (matches NodeSource default + systemd-reachable node)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fake `gh auth status` so quick-install.sh skips the interactive login
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          # gh auth status checks ~/.config/gh/hosts.yml or GH_TOKEN env
+          gh auth status
+
+      - name: Run quick-install.sh with auto-start disabled (no systemd --user in CI)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITDASH_NO_START: '1'
+          # Point the installer at the checked-out source rather than cloning main.
+          # Avoids a chicken-and-egg where this PR's changes aren't what's being tested.
+          GITDASH_HOME: ${{ github.workspace }}/gitdash-installed
+          GITDASH_REPO: ${{ github.workspace }}
+        run: |
+          set -euxo pipefail
+          bash scripts/quick-install.sh
+
+      - name: Verify better-sqlite3 loads under the install's node
+        run: |
+          set -euxo pipefail
+          cd "${{ github.workspace }}/gitdash-installed"
+          node -e 'require("better-sqlite3"); console.log("better-sqlite3 loaded OK")'
+
+      - name: Start the launcher in the background and health-check HTTP 200
+        run: |
+          set -euxo pipefail
+          cd "${{ github.workspace }}/gitdash-installed"
+          # Start launcher in the background, log to a file
+          nohup ./bin/gitdash start > /tmp/gitdash.log 2>&1 &
+          GITDASH_PID=$!
+          echo "started launcher as PID $GITDASH_PID"
+
+          # Poll the URL for up to 30s
+          for i in $(seq 1 30); do
+            code=$(curl -o /dev/null -s -w '%{http_code}' --max-time 3 http://127.0.0.1:7420/ || echo "000")
+            echo "try $i: HTTP $code"
+            case "$code" in
+              200|204|301|302|403) echo "OK"; kill "$GITDASH_PID" 2>/dev/null || true; exit 0 ;;
+            esac
+            sleep 1
+          done
+
+          echo "::error::Dashboard did not respond within 30s"
+          echo "---- /tmp/gitdash.log ----"
+          cat /tmp/gitdash.log || true
+          kill "$GITDASH_PID" 2>/dev/null || true
+          exit 1
