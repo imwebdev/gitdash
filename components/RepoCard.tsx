@@ -6,13 +6,36 @@ import { ActionModal } from "./ActionModal";
 import { RowDetail } from "./RowDetail";
 import { useState } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   ExternalLink,
   GitPullRequest,
   RefreshCw,
 } from "lucide-react";
+
+type PillTone = "push" | "pull" | "clean" | "dirty" | "attention" | "neutral";
+
+const PILL_TONE: Record<PillTone, string> = {
+  push: "border-accent-push/30 bg-accent-push/10 text-accent-push",
+  pull: "border-accent-pull/30 bg-accent-pull/10 text-accent-pull",
+  clean: "border-accent-clean/30 bg-accent-clean/10 text-accent-clean",
+  dirty: "border-accent-dirty/30 bg-accent-dirty/10 text-accent-dirty",
+  attention: "border-accent-attention/30 bg-accent-attention/10 text-accent-attention",
+  neutral: "border-fg-dim/30 bg-fg-dim/10 text-fg-muted",
+};
+
+function Pill({ tone, children, className }: { tone: PillTone; children: React.ReactNode; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium tabular-nums",
+        PILL_TONE[tone],
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
 
 export type GroupKind =
   | "push"
@@ -282,26 +305,12 @@ function SyncCell({
   behind: number;
   hasUpstream: boolean;
 }) {
-  if (!hasUpstream) {
-    return <span className="text-[12px] text-fg-dim">no upstream</span>;
-  }
-  if (ahead === 0 && behind === 0) {
-    return <span className="text-[12px] text-fg-dim">in sync</span>;
-  }
+  if (!hasUpstream) return <Pill tone="neutral">no upstream</Pill>;
+  if (ahead === 0 && behind === 0) return <Pill tone="clean">in sync</Pill>;
   return (
-    <div className="flex items-center gap-3 text-[13px] tabular-nums">
-      {ahead > 0 && (
-        <span className="inline-flex items-center gap-1 text-accent-push">
-          <ArrowUp className="h-3 w-3" />
-          {ahead}
-        </span>
-      )}
-      {behind > 0 && (
-        <span className="inline-flex items-center gap-1 text-accent-pull">
-          <ArrowDown className="h-3 w-3" />
-          {behind}
-        </span>
-      )}
+    <div className="flex flex-wrap items-center gap-1.5">
+      {ahead > 0 && <Pill tone="push">{ahead} ahead</Pill>}
+      {behind > 0 && <Pill tone="pull">{behind} behind</Pill>}
     </div>
   );
 }
@@ -316,19 +325,13 @@ function LocalCell({
   conflicts: number;
 }) {
   if (conflicts > 0) {
-    return (
-      <span className="text-[12px] font-medium text-accent-attention">
-        {conflicts} conflict{conflicts === 1 ? "" : "s"}
-      </span>
-    );
+    return <Pill tone="attention">{conflicts} conflict{conflicts === 1 ? "" : "s"}</Pill>;
   }
-  if (dirty === 0) {
-    return <span className="text-[12px] text-fg-dim">clean</span>;
-  }
+  if (dirty === 0) return <Pill tone="clean">clean</Pill>;
   return (
-    <div className="flex flex-col text-[12px] leading-tight">
-      <span className="text-accent-dirty">{dirty} unsaved</span>
-      {newFiles > 0 && <span className="text-fg-dim">{newFiles} new</span>}
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Pill tone="dirty">{dirty} unsaved</Pill>
+      {newFiles > 0 && <Pill tone="neutral">{newFiles} new</Pill>}
     </div>
   );
 }
@@ -342,26 +345,12 @@ function MobileSyncChip({
   behind: number;
   hasUpstream: boolean;
 }) {
-  if (!hasUpstream) {
-    return <span className="text-fg-dim">no upstream</span>;
-  }
-  if (ahead === 0 && behind === 0) {
-    return <span className="text-fg-dim">in sync</span>;
-  }
+  if (!hasUpstream) return <Pill tone="neutral">no upstream</Pill>;
+  if (ahead === 0 && behind === 0) return <Pill tone="clean">in sync</Pill>;
   return (
-    <span className="inline-flex items-center gap-2 tabular-nums">
-      {ahead > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-accent-push">
-          <ArrowUp className="h-3 w-3" />
-          {ahead}
-        </span>
-      )}
-      {behind > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-accent-pull">
-          <ArrowDown className="h-3 w-3" />
-          {behind}
-        </span>
-      )}
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {ahead > 0 && <Pill tone="push">{ahead} ahead</Pill>}
+      {behind > 0 && <Pill tone="pull">{behind} behind</Pill>}
     </span>
   );
 }
@@ -376,19 +365,13 @@ function MobileLocalChip({
   conflicts: number;
 }) {
   if (conflicts > 0) {
-    return (
-      <span className="font-medium text-accent-attention">
-        {conflicts} conflict{conflicts === 1 ? "" : "s"}
-      </span>
-    );
+    return <Pill tone="attention">{conflicts} conflict{conflicts === 1 ? "" : "s"}</Pill>;
   }
   if (dirty === 0) return null;
   return (
-    <span className="text-accent-dirty">
-      {dirty} unsaved
-      {newFiles > 0 && (
-        <span className="ml-1 text-fg-dim">({newFiles} new)</span>
-      )}
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <Pill tone="dirty">{dirty} unsaved</Pill>
+      {newFiles > 0 && <Pill tone="neutral">{newFiles} new</Pill>}
     </span>
   );
 }
