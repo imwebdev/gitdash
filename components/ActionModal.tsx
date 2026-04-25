@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { RepoView } from "@/lib/state/store";
-import { AlertTriangle, X } from "lucide-react";
+import type { AuditFinding } from "@/lib/security/npm-audit";
+import { AlertTriangle, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const FOCUSABLE_SELECTOR =
@@ -50,6 +51,7 @@ interface ChangesResponse {
   total: number;
   suspicious: ChangeEntry[];
   truncated: boolean;
+  npmAuditFindings?: AuditFinding[];
 }
 
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
@@ -399,6 +401,7 @@ function CommitPushConfirm({
 }) {
   const total = changes?.total ?? 0;
   const suspicious = changes?.suspicious ?? [];
+  const npmFindings = changes?.npmAuditFindings ?? [];
   const submitLabel = pushAfter ? "Commit & push" : "Commit";
 
   return (
@@ -459,6 +462,10 @@ function CommitPushConfirm({
               </div>
             </div>
           )}
+
+          {npmFindings.length > 0 && (
+            <NpmAuditFindings findings={npmFindings} />
+          )}
         </>
       )}
 
@@ -495,6 +502,56 @@ function CommitPushConfirm({
         >
           {submitLabel}
         </button>
+      </div>
+    </div>
+  );
+}
+
+const AUDIT_FINDING_MAX_DISPLAY = 20;
+
+function NpmAuditFindings({ findings }: { findings: AuditFinding[] }) {
+  const shown = findings.slice(0, AUDIT_FINDING_MAX_DISPLAY);
+  const overflow = findings.length - shown.length;
+
+  return (
+    <div className="flex gap-3 rounded-lg border border-yellow-500/30 bg-yellow-500/8 p-4">
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" />
+      <div className="min-w-0 flex-1 text-[12.5px] text-fg-muted">
+        <p className="font-medium text-fg">
+          Heads up: dependency vulnerabilities found
+        </p>
+        <p className="mt-0.5 text-[12px] text-fg-dim">
+          These don&apos;t block your push, but you may want to update before going live.
+        </p>
+        <ul className="mt-2 space-y-2">
+          {shown.map((f) => (
+            <li key={f.name} className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-2">
+                <span className="mono text-[12px] text-fg">{f.name}</span>
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                    f.severity === "critical"
+                      ? "bg-orange-500/20 text-orange-400"
+                      : "bg-yellow-500/20 text-yellow-400",
+                  )}
+                >
+                  {f.severity}
+                </span>
+              </div>
+              <p className="text-[11.5px] text-fg-dim leading-snug">{f.title}</p>
+              <p className="text-[11px] text-fg-dim/70">
+                What can I do? Run <span className="mono">npm update</span> or open package.json to bump versions.
+              </p>
+            </li>
+          ))}
+        </ul>
+        {overflow > 0 && (
+          <p className="mt-2 text-[11px] text-fg-dim">…and {overflow} more</p>
+        )}
+        <p className="mt-3 text-[10.5px] text-fg-dim/60">
+          Tool: npm audit. Findings are advisory; severity is set by the npm registry.
+        </p>
       </div>
     </div>
   );

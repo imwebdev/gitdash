@@ -4,6 +4,7 @@ import path from "node:path";
 import { bootstrap } from "@/lib/bootstrap";
 import { getRepoById } from "@/lib/db/repos";
 import { runGit } from "@/lib/git/exec";
+import { runNpmAudit, type AuditFinding } from "@/lib/security/npm-audit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -101,10 +102,27 @@ export async function GET(
 
   const suspicious = entries.filter((e) => e.reason !== null);
 
+  // Run npm audit when the staged set includes package.json or package-lock.json.
+  const npmTriggerFiles = new Set(["package.json", "package-lock.json"]);
+  const stagedPaths = entries.map((e) => path.basename(e.path));
+  const shouldAudit = stagedPaths.some((f) => npmTriggerFiles.has(f));
+
+  let npmAuditFindings: AuditFinding[] = [];
+  if (shouldAudit) {
+    try {
+      const findings = await runNpmAudit(repo.repoPath);
+      npmAuditFindings = findings ?? [];
+    } catch {
+      // Additive — scanner failure must never break the preview response.
+      npmAuditFindings = [];
+    }
+  }
+
   return NextResponse.json({
     files: entries,
     total: chunks.length,
     suspicious,
     truncated,
+    npmAuditFindings,
   });
 }
