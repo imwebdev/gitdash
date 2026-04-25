@@ -46,6 +46,17 @@ export GITDASH_PORT="$PORT"
 
 MODE="${1:-start}"
 
+# status subcommand: reads SQLite directly, no server/port/CSRF needed.
+if [[ "$MODE" == "status" ]]; then
+  shift
+  TSX="$DIR/node_modules/.bin/tsx"
+  if [[ ! -x "$TSX" ]]; then
+    echo "[gitdash] tsx not found — run \`npm install\` in $DIR" >&2
+    exit 1
+  fi
+  exec "$TSX" "$DIR/scripts/status.ts" "$@"
+fi
+
 if [[ ! -d "$DIR/.next" && "$MODE" == "start" ]]; then
   echo "[gitdash] no build found — running \`npm run build\` first"
   npm run build
@@ -75,5 +86,5 @@ fi
 case "$MODE" in
   start) exec "$NEXT" start -H "$BIND" -p "$PORT" ;;
   dev)   exec "$NEXT" dev   -H "$BIND" -p "$PORT" ;;
-  *)     echo "usage: gitdash [start|dev]" >&2; exit 1 ;;
+  *)     echo "usage: gitdash [start|dev|status [--cwd <path>]]" >&2; exit 1 ;;
 esac
