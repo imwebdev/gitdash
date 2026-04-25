@@ -17,7 +17,20 @@ export type ActionName =
   | "stash-pop"
   | "open-editor"
   | "open-terminal"
-  | "commit-push";
+  | "commit-push"
+  | "publish-to-github";
+
+export interface PublishOptions {
+  name: string;
+  visibility: "private" | "public";
+  description?: string;
+}
+
+const PUBLISH_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
+export function isValidPublishName(name: string): boolean {
+  return PUBLISH_NAME_RE.test(name);
+}
 
 export interface ActionRun {
   id: string;
@@ -44,6 +57,7 @@ interface StartOptions {
   action: ActionName;
   branch: string | null;
   commitMessage?: string;
+  publish?: PublishOptions;
 }
 
 export function startAction(opts: StartOptions): ActionRun {
@@ -72,6 +86,29 @@ export function startAction(opts: StartOptions): ActionRun {
         run.finishedAt = Date.now();
         recordRunFinish(run);
         // surface error
+        run.lines.push(`[fatal] ${(err as Error).message}`);
+      });
+    });
+    getDb().prepare(
+      "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
+    ).run(opts.repoId, opts.action, run.startedAt);
+    return run;
+  }
+
+  if (opts.action === "publish-to-github") {
+    if (!opts.publish) {
+      throw new Error("publish-to-github requires publish options");
+    }
+    if (!isValidPublishName(opts.publish.name)) {
+      throw new Error("invalid repository name");
+    }
+    const publish = opts.publish;
+    setImmediate(() => {
+      executePublishToGithub(run, opts.repoPath, publish).catch((err) => {
+        run.emitter.emit("done", { exitCode: -1 });
+        run.exitCode = -1;
+        run.finishedAt = Date.now();
+        recordRunFinish(run);
         run.lines.push(`[fatal] ${(err as Error).message}`);
       });
     });
@@ -144,6 +181,8 @@ function buildArgs(action: ActionName, branch: string | null): string[] {
       return [];
     case "commit-push":
       return [];
+    case "publish-to-github":
+      return [];
   }
 }
 
@@ -182,6 +221,8 @@ function friendlyActionLabel(action: ActionName): string {
       return "Open terminal";
     case "commit-push":
       return "Commit & push";
+    case "publish-to-github":
+      return "Publish to GitHub";
   }
 }
 
@@ -457,6 +498,107 @@ async function executeCommitPush(
   run.emitter.emit("done", { exitCode: 0 });
 }
 
+async function executePublishToGithub(
+  run: ActionRun,
+  repoPath: string,
+  opts: PublishOptions,
+): Promise<void> {
+  const emit = (text: string) => {
+    run.lines.push(text);
+    run.emitter.emit("line", text);
+  };
+
+  // Defensive: bail if repo already has an origin remote — gh repo create
+  // would error out and the user would be confused. This catches the case
+  // where a transient `unknown` remoteState landed the repo in local-only
+  // even though it actually has a remote configured.
+  try {
+    const result = await execFileAsync("git", ["-C", repoPath, "config", "--get", "remote.origin.url"], {
+      timeout: 5_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    const url = result.stdout.trim();
+    if (url) {
+      emit(`[gitdash] ✗ This repo already has an 'origin' remote: ${url}`);
+      emit("[gitdash] hint: Refresh the row to update its connection status — it may already be linked to GitHub.");
+      run.finishedAt = Date.now();
+      run.exitCode = 1;
+      recordRunFinish(run);
+      run.emitter.emit("done", { exitCode: 1 });
+      return;
+    }
+  } catch {
+    // No origin remote — proceed.
+  }
+
+  const visibilityFlag = opts.visibility === "public" ? "--public" : "--private";
+  const args = [
+    "repo",
+    "create",
+    opts.name,
+    visibilityFlag,
+    `--source=${repoPath}`,
+    "--remote=origin",
+    "--push",
+  ];
+  if (opts.description && opts.description.trim()) {
+    args.push(`--description=${opts.description.trim().slice(0, 350)}`);
+  }
+
+  const code = await spawnGhStep(run, emit, args);
+  run.finishedAt = Date.now();
+  run.exitCode = code;
+  recordRunFinish(run);
+  if (code === 0) {
+    emit(`[gitdash] ✓ Repository created and pushed to GitHub.`);
+  } else {
+    emit(`[gitdash] ✗ ${friendlyStepLabel("publish")} didn't complete (exit ${code}).`);
+    emitHint(emit, run.lines);
+  }
+  run.emitter.emit("done", { exitCode: code });
+}
+
+function spawnGhStep(
+  run: ActionRun,
+  emit: (text: string) => void,
+  args: string[],
+): Promise<number> {
+  return new Promise<number>((resolve) => {
+    emit(`$ gh ${args.join(" ")}`);
+    const child = spawn("gh", args, {
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    run.child = child;
+    const onData = (chunk: Buffer) => {
+      for (const line of chunk.toString("utf8").split(/\r?\n/)) {
+        if (line.length > 0) emit(line);
+      }
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    const timer = setTimeout(() => {
+      emit("[timeout] SIGTERM");
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 3_000);
+    }, 120_000);
+    child.on("close", (c) => {
+      clearTimeout(timer);
+      resolve(c ?? -1);
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      const errno = err as NodeJS.ErrnoException;
+      if (errno.code === "ENOENT") {
+        emit("[gitdash] hint: GitHub CLI ('gh') isn't installed or isn't on PATH. Install it from https://cli.github.com.");
+      } else {
+        emit(`[error] ${err.message}`);
+      }
+      resolve(-1);
+    });
+  });
+}
+
 function getEditor(): string {
   return process.env.GITDASH_EDITOR || "code";
 }
@@ -554,6 +696,7 @@ const VALID_ACTIONS: ReadonlySet<string> = new Set([
   "open-editor",
   "open-terminal",
   "commit-push",
+  "publish-to-github",
 ]);
 
 export function isValidAction(value: string): value is ActionName {

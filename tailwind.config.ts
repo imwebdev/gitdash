@@ -32,6 +32,7 @@ const config: Config = {
           attention: "hsl(var(--attention))",
           dirty: "hsl(var(--dirty))",
           clean: "hsl(var(--clean))",
+          "local-only": "hsl(var(--local-only))",
         },
       },
       letterSpacing: {

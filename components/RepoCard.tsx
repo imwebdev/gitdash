@@ -14,7 +14,15 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-export type GroupKind = "push" | "pull" | "diverged" | "attention" | "dirty" | "read-only" | "clean";
+export type GroupKind =
+  | "push"
+  | "pull"
+  | "diverged"
+  | "attention"
+  | "dirty"
+  | "local-only"
+  | "read-only"
+  | "clean";
 
 export const ROW_GRID =
   "grid-cols-[minmax(180px,1.4fr)_120px_150px_minmax(200px,1.6fr)_80px_148px_104px]";
@@ -32,6 +40,7 @@ function primaryAction(
   if (kind === "dirty" && !hasConflicts && hasRemote) {
     return { label: "Commit & push", action: "commit-push" };
   }
+  if (kind === "local-only") return { label: "Publish to GitHub", action: "publish-to-github" };
   return { label: "", action: null };
 }
 
@@ -57,6 +66,8 @@ function actionButtonClass(kind: GroupKind): string {
       "border-accent-diverged/35 bg-accent-diverged/10 text-accent-diverged hover:border-accent-diverged/55 hover:bg-accent-diverged/20",
     kind === "dirty" &&
       "border-accent-dirty/35 bg-accent-dirty/10 text-accent-dirty hover:border-accent-dirty/55 hover:bg-accent-dirty/20",
+    kind === "local-only" &&
+      "border-accent-local-only/35 bg-accent-local-only/10 text-accent-local-only hover:border-accent-local-only/55 hover:bg-accent-local-only/20",
   );
 }
 
