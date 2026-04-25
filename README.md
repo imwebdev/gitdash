@@ -232,7 +232,7 @@ gitdash install-hook --uninstall  # remove the gitdash entry cleanly
 
 ```json
 {
-  "matcher": "*",
+  "matcher": "",
   "hooks": [
     {
       "type": "command",
@@ -289,7 +289,7 @@ Add this block to `~/.claude/settings.json` alongside the `SessionStart` entry:
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "*",
+        "matcher": "",
         "hooks": [
           {
             "type": "command",
@@ -300,7 +300,7 @@ Add this block to `~/.claude/settings.json` alongside the `SessionStart` entry:
     ],
     "Stop": [
       {
-        "matcher": "*",
+        "matcher": "",
         "hooks": [
           {
             "type": "command",

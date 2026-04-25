@@ -22,7 +22,7 @@ import path from "node:path";
 // ── Canonical hook entry ─────────────────────────────────────────────────────
 
 const CANONICAL_HOOK = {
-  matcher: "*",
+  matcher: "",
   hooks: [
     {
       type: "command",
@@ -30,6 +30,13 @@ const CANONICAL_HOOK = {
     },
   ],
 } as const;
+
+/** Returns true if an entry has the deprecated wildcard matcher value. */
+function hasDeprecatedMatcher(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const e = entry as Record<string, unknown>;
+  return e["matcher"] === "*";
+}
 
 // Identification heuristic: any hook command containing "gitdash status"
 function isGitdashEntry(entry: unknown): boolean {
@@ -184,7 +191,27 @@ async function runInstall(existing: SettingsJson | null): Promise<void> {
       return; // idempotent — no write, no backup
     }
 
-    // Stale entry — replace
+    // Migration: rewrite deprecated matcher "*" → ""
+    if (hasDeprecatedMatcher(existingEntry)) {
+      if (dryRun) {
+        sessionStart[existingIdx] = CANONICAL_HOOK;
+        process.stdout.write(
+          `[dry-run] would update stale gitdash entry in ${targetPath}:\n` +
+            JSON.stringify(settings, null, 2) + "\n",
+        );
+        return;
+      }
+
+      await backup();
+      sessionStart[existingIdx] = CANONICAL_HOOK;
+      await writeSettings(settings);
+      process.stdout.write(
+        `updated matcher on existing gitdash hook (was using deprecated value)\n`,
+      );
+      return;
+    }
+
+    // Stale entry (other difference) — replace
     if (dryRun) {
       sessionStart[existingIdx] = CANONICAL_HOOK;
       process.stdout.write(
