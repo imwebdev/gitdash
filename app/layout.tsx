@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Instrument_Serif, Instrument_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { VersionBadge } from "@/components/VersionBadge";
+import { UpdateBanner } from "@/components/UpdateBanner";
 
 const serif = Instrument_Serif({
   subsets: ["latin"],
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body suppressHydrationWarning>
         {children}
+        <UpdateBanner />
         <VersionBadge />
       </body>
     </html>
