@@ -4,6 +4,8 @@ import path from "node:path";
 import { bootstrap } from "@/lib/bootstrap";
 import { getRepoById } from "@/lib/db/repos";
 import { runGit } from "@/lib/git/exec";
+import { scanForPromptInjection } from "@/lib/security/prompt-injection";
+import type { PromptInjectionFinding } from "@/lib/security/prompt-injection";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -101,10 +103,28 @@ export async function GET(
 
   const suspicious = entries.filter((e) => e.reason !== null);
 
+  // Collect the relative paths and which ones are deleted (no file on disk)
+  const deletedPaths = new Set<string>(
+    entries.filter((e) => e.status.trim().startsWith("D")).map((e) => e.path),
+  );
+  const relPaths = entries.map((e) => e.path);
+
+  let promptInjectionFindings: PromptInjectionFinding[] = [];
+  let promptInjectionTruncated = false;
+  try {
+    const piResult = await scanForPromptInjection(relPaths, repoRoot, deletedPaths);
+    promptInjectionFindings = piResult.findings;
+    promptInjectionTruncated = piResult.truncated;
+  } catch {
+    // scanner errors never block the preview
+  }
+
   return NextResponse.json({
     files: entries,
     total: chunks.length,
     suspicious,
     truncated,
+    promptInjectionFindings,
+    promptInjectionTruncated,
   });
 }
