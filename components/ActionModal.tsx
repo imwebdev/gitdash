@@ -45,11 +45,21 @@ interface ChangeEntry {
   reason: "secret" | "large" | null;
 }
 
+interface PromptInjectionFinding {
+  path: string;
+  line: number;
+  snippet: string;
+  patternId: number;
+  patternLabel: string;
+}
+
 interface ChangesResponse {
   files: ChangeEntry[];
   total: number;
   suspicious: ChangeEntry[];
   truncated: boolean;
+  promptInjectionFindings: PromptInjectionFinding[];
+  promptInjectionTruncated: boolean;
 }
 
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
@@ -399,6 +409,8 @@ function CommitPushConfirm({
 }) {
   const total = changes?.total ?? 0;
   const suspicious = changes?.suspicious ?? [];
+  const promptInjectionFindings = changes?.promptInjectionFindings ?? [];
+  const promptInjectionTruncated = changes?.promptInjectionTruncated ?? false;
   const submitLabel = pushAfter ? "Commit & push" : "Commit";
 
   return (
@@ -458,6 +470,13 @@ function CommitPushConfirm({
                 )}
               </div>
             </div>
+          )}
+
+          {promptInjectionFindings.length > 0 && (
+            <PromptInjectionFindingsSection
+              findings={promptInjectionFindings}
+              truncated={promptInjectionTruncated}
+            />
           )}
         </>
       )}
@@ -630,6 +649,63 @@ function PublishToGithubConfirm({
         >
           Publish
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PromptInjectionFindingsSection({
+  findings,
+  truncated,
+}: {
+  findings: PromptInjectionFinding[];
+  truncated: boolean;
+}) {
+  const MAX_SHOW = 30;
+  const shown = findings.slice(0, MAX_SHOW);
+  const overflow = findings.length - shown.length;
+
+  return (
+    <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/8 p-4">
+      <div className="flex gap-3">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" />
+        <div className="min-w-0 flex-1 text-[12.5px] text-fg-muted">
+          <p className="font-medium text-fg">Possible prompt-injection patterns detected</p>
+          <p className="mt-0.5 text-[11.5px] text-fg-dim">
+            Text that tries to override an AI&rsquo;s instructions. These don&rsquo;t block your push — review if you didn&rsquo;t mean to commit them.
+          </p>
+
+          <ul className="mt-2 space-y-1.5">
+            {shown.map((f, i) => (
+              <li key={i} className="flex flex-col gap-0.5">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="mono text-[11px] text-yellow-400 shrink-0">
+                    {f.path}:{f.line}
+                  </span>
+                  <span className="rounded bg-fg/8 px-1 py-px text-[10px] uppercase tracking-wide text-fg-dim">
+                    {f.patternLabel}
+                  </span>
+                </div>
+                <span className="mono text-[11px] text-fg-dim truncate block" title={f.snippet}>
+                  {f.snippet}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {overflow > 0 && (
+            <p className="mt-2 text-[11px] text-fg-dim">…and {overflow} more</p>
+          )}
+          {truncated && overflow === 0 && (
+            <p className="mt-2 text-[11px] text-fg-dim">(showing first {MAX_SHOW})</p>
+          )}
+
+          <p className="mt-3 text-[10.5px] text-fg-dim">
+            If a file is intentionally a prompt or eval, add{" "}
+            <code className="mono rounded bg-fg/8 px-1">gitdash:skip-prompt-injection</code>{" "}
+            anywhere in it to suppress this check.
+          </p>
+        </div>
       </div>
     </div>
   );
