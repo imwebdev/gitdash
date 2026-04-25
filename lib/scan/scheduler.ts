@@ -9,8 +9,10 @@ import {
   listActiveRepos,
   markRepoDeleted,
   getRepoById,
+  getSnapshot,
 } from "@/lib/db/repos";
-import { getStore } from "@/lib/state/store";
+import { deriveState, displayName, getStore } from "@/lib/state/store";
+import { notifyTransition } from "@/lib/notify/desktop";
 
 export interface SchedulerOptions {
   config: DiscoveryConfig;
@@ -123,6 +125,9 @@ class Scheduler {
       slice.map((row) =>
         this.remoteLimit(async () => {
           try {
+            const oldSnap = getSnapshot(row.id);
+            const oldState = deriveState(row, oldSnap);
+
             const snap = await collectSnapshot({ path: row.repoPath });
             const weirdFlags = await detectWeirdFlags(row.repoPath);
             const slug = parseGithubSlug(snap.remoteUrl);
@@ -137,6 +142,28 @@ class Scheduler {
               ]);
             }
             upsertSnapshot(row.id, snap, comparison, weirdFlags, Date.now(), prCount, canPush);
+
+            const newSnap = getSnapshot(row.id);
+            const newState = deriveState(row, newSnap);
+            const transitionedToBehind =
+              (newState === "behind" || newState === "diverged") &&
+              oldState !== "behind" &&
+              oldState !== "diverged";
+            if (transitionedToBehind && newSnap) {
+              try {
+                notifyTransition({
+                  repoName: displayName(row.repoPath),
+                  branch: newSnap.branch,
+                  upstream: newSnap.upstream,
+                  behind: newSnap.remoteBehind ?? newSnap.behind,
+                  ahead: newSnap.remoteAhead ?? newSnap.ahead,
+                  state: newState as "behind" | "diverged",
+                });
+              } catch (notifyErr) {
+                console.error(`[scheduler] notify failed for ${row.repoPath}`, notifyErr);
+              }
+            }
+
             getStore().emitUpdate(row.id);
           } catch (err) {
             console.error(`[scheduler] remote tick failed for ${row.repoPath}`, err);
