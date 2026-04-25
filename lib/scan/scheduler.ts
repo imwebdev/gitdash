@@ -147,9 +147,10 @@ class Scheduler {
 
     // Collect current local state first.
     let snap;
+    let weirdFlags: string[] = [];
     try {
       snap = await collectSnapshot({ path: row.repoPath });
-      const weirdFlags = await detectWeirdFlags(row.repoPath);
+      weirdFlags = await detectWeirdFlags(row.repoPath);
       if (snap.remoteUrl && !row.githubOwner) {
         updateGithubSlug(row.id, snap.remoteUrl);
       }
@@ -179,7 +180,7 @@ class Scheduler {
       fetchCanPush(slug),
     ]);
 
-    upsertSnapshot(row.id, snap, comparison, [], Date.now(), prCount, canPush);
+    upsertSnapshot(row.id, snap, comparison, weirdFlags, Date.now(), prCount, canPush);
     getStore().emitUpdate(repoId);
 
     return {
