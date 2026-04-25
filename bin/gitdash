@@ -62,8 +62,18 @@ printf '    csrf:    %s\n\n' "$GITDASH_CSRF_TOKEN"
 # Open browser on the local machine (non-fatal if missing)
 (sleep 1 && xdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1) &
 
+# Invoke next.js via its installed binary directly, not through npx.
+# Avoids two failure modes:
+#   1. npx resolving `next` from the wrong PATH (see #66 — similar class of bug)
+#   2. npx fetching a remote copy when the local one is out-of-sync
+NEXT="$DIR/node_modules/.bin/next"
+if [[ ! -x "$NEXT" ]]; then
+  echo "[gitdash] $NEXT missing — running \`npm install\`" >&2
+  npm install --no-audit --no-fund
+fi
+
 case "$MODE" in
-  start) exec npx next start -H "$BIND" -p "$PORT" ;;
-  dev)   exec npx next dev -H "$BIND" -p "$PORT" ;;
+  start) exec "$NEXT" start -H "$BIND" -p "$PORT" ;;
+  dev)   exec "$NEXT" dev   -H "$BIND" -p "$PORT" ;;
   *)     echo "usage: gitdash [start|dev]" >&2; exit 1 ;;
 esac
