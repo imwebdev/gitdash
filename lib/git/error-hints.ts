@@ -93,6 +93,15 @@ const PATTERNS: readonly Pattern[] = [
       "Your branch and the remote have both moved.\n" +
       "Fix: pull with rebase to replay your commits on top  ( git pull --rebase ), then push.",
   },
+  {
+    test: /Author identity unknown|unable to auto-detect email address|Please tell me who you are/i,
+    hint:
+      "Git doesn't know who you are yet — first commit on this machine.\n" +
+      "Fix: open a terminal and run\n" +
+      '  git config --global user.email "you@example.com"\n' +
+      '  git config --global user.name "Your Name"\n' +
+      "then click Commit & push again.",
+  },
 ];
 
 export function translateGitError(lines: readonly string[]): ErrorHint | null {
