@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertOctagon, AlertTriangle, RefreshCw, X } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Check, RefreshCw, X } from "lucide-react";
 import { GhSignInModal } from "./GhSignInModal";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +31,7 @@ interface Props {
 export function HealthBanner({ csrfToken }: Props) {
   const [warnings, setWarnings] = useState<HealthWarning[]>([]);
   const [loading, setLoading] = useState(false);
+  const [justChecked, setJustChecked] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(() => {
     if (typeof window === "undefined") return new Set();
     try {
@@ -42,13 +43,17 @@ export function HealthBanner({ csrfToken }: Props) {
   });
   const [signInOpen, setSignInOpen] = useState(false);
 
-  const fetchHealth = useCallback(async () => {
+  const fetchHealth = useCallback(async (opts?: { surfaceFeedback?: boolean }) => {
     setLoading(true);
     try {
       const res = await fetch("/api/health", { cache: "no-store" });
       if (res.ok) {
         const data = (await res.json()) as HealthResult;
         setWarnings(data.warnings);
+        if (opts?.surfaceFeedback) {
+          setJustChecked(true);
+          setTimeout(() => setJustChecked(false), 2_000);
+        }
       }
     } catch {
       // Network blip — keep last state, banner UI shows stale until next tick.
@@ -99,15 +104,27 @@ export function HealthBanner({ csrfToken }: Props) {
         <div className="flex items-center justify-end">
           <button
             type="button"
-            onClick={() => void fetchHealth()}
+            onClick={() => void fetchHealth({ surfaceFeedback: true })}
             disabled={loading}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-[11px] font-medium text-fg-muted transition-colors hover:border-fg-muted hover:text-fg",
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium transition-colors",
+              justChecked
+                ? "border-accent-clean/45 bg-accent-clean/10 text-accent-clean"
+                : "border-border text-fg-muted hover:border-fg-muted hover:text-fg",
               loading && "opacity-60",
             )}
           >
-            <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
-            Re-check
+            {justChecked ? (
+              <>
+                <Check className="h-3 w-3" />
+                Checked just now
+              </>
+            ) : (
+              <>
+                <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
+                Re-check
+              </>
+            )}
           </button>
         </div>
       </section>
