@@ -10,6 +10,8 @@ export interface DiscoveryConfig {
   includeDotfilesAsRepoRoots: boolean;
   /** If false, the home-dir-as-repo and dotfile-tool repos are filtered out. */
   showSystemRepos: boolean;
+  /** Human-readable label for this machine shown in the dashboard title. */
+  machineLabel?: string;
 }
 
 export const DEFAULT_CONFIG: DiscoveryConfig = {

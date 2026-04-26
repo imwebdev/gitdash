@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RepoView } from "@/lib/state/store";
 import { RepoGroup } from "./RepoGroup";
 import type { GroupKind } from "./RepoCard";
 import { ThemeToggle } from "./ThemeToggle";
 import { RemoteReposSection } from "./RemoteReposSection";
 import { HealthBanner } from "./HealthBanner";
+import { Pencil } from "lucide-react";
 
 interface Props {
   initialRepos: RepoView[];
@@ -157,6 +158,132 @@ function bodyFor(kind: GroupKind, _n: number): string {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Inline-editable machine label
+// ---------------------------------------------------------------------------
+
+interface MachineLabelEditorProps {
+  csrfToken: string;
+}
+
+function MachineLabelEditor({ csrfToken }: MachineLabelEditorProps) {
+  const [label, setLabel] = useState<string>("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch current label on mount
+  useEffect(() => {
+    fetch("/api/config/machine-label")
+      .then((r) => r.json())
+      .then((d: unknown) => {
+        const data = d as { label: string };
+        setLabel(data.label);
+        document.title = data.label ? `${data.label} · gitdash` : "gitdash";
+      })
+      .catch(() => {
+        // ignore — fallback stays as-is
+      });
+  }, []);
+
+  function startEditing() {
+    setDraft(label);
+    setError(null);
+    setEditing(true);
+    // Focus happens after re-render
+    setTimeout(() => {
+      inputRef.current?.select();
+    }, 0);
+  }
+
+  async function commitEdit() {
+    if (!editing) return;
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed === label) return; // no change
+    try {
+      const res = await fetch("/api/config/machine-label", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({ label: trimmed }),
+      });
+      if (!res.ok) {
+        setError("Couldn't save — try again");
+        return;
+      }
+      const data = (await res.json()) as { label: string };
+      setLabel(data.label);
+      document.title = data.label ? `${data.label} · gitdash` : "gitdash";
+      setError(null);
+    } catch {
+      setError("Couldn't save — try again");
+    }
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setDraft("");
+    setError(null);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void commitEdit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEdit();
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-1">
+        <input
+          ref={inputRef}
+          autoFocus
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={() => void commitEdit()}
+          maxLength={80}
+          className="display text-[36px] leading-none tracking-display-tight text-fg sm:text-[44px] bg-transparent border-b border-ring outline-none w-full max-w-xs"
+          aria-label="Machine label"
+        />
+        <p className="text-[11px] text-fg-dim">Enter to save · Esc to cancel</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={startEditing}
+        className="group flex items-center gap-2 text-left"
+        title="Click to rename this machine"
+      >
+        <h1 className="display text-[36px] leading-none tracking-display-tight text-fg sm:text-[44px]">
+          {label || "gitdash"}
+        </h1>
+        <Pencil
+          size={14}
+          className="text-fg-dim opacity-0 group-hover:opacity-60 transition-opacity mt-2 shrink-0"
+          aria-hidden
+        />
+      </button>
+      {error && (
+        <p className="text-[12px] text-accent-attention">{error}</p>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard({ initialRepos, csrfToken }: Props) {
   const [repos, setRepos] = useState<RepoView[]>(initialRepos);
   const [showSystem, setShowSystem] = useState(false);
@@ -257,9 +384,7 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
     <main className="grain relative mx-auto max-w-[1280px] px-4 py-8 sm:px-10 sm:py-14">
       <header className="mb-8 flex flex-col gap-5 sm:mb-12 sm:gap-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="display text-[36px] leading-none tracking-display-tight text-fg sm:text-[44px]">
-            gitdash
-          </h1>
+          <MachineLabelEditor csrfToken={csrfToken} />
           <p className="mt-3 max-w-lg text-[14px] text-fg-muted sm:text-[15px]">
             {actionableCount === 0 ? (
               <>Nothing urgent. <span className="display-italic text-fg">All caught up.</span></>
