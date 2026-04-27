@@ -135,11 +135,12 @@ async function registerKeyOnGithub(pubKey: string): Promise<boolean> {
     const mentionsScope = /needs the .* scope|missing required scope|requires .* scope/i.test(errText);
     const is404 = /\b404\b|not found/i.test(errText);
     if ((mentionsScope && mentionsSshSigningScope) || (is404 && mentionsSshSigningScope)) {
-      throw new Error(
-        "GitHub needs an extra permission before gitdash can register a signing key. " +
-        "Close this dialog, click \"Connect GitHub\" in the banner, and complete the GitHub sign-in. " +
-        "After that, click \"Set up signing\" again and it will work.",
+      const e2 = new Error(
+        "GitHub is missing the permission to add SSH signing keys. " +
+        "Click \"Reconnect GitHub\" below to grant it, then come back and try again.",
       );
+      (e2 as Error & { needsReconnect?: boolean }).needsReconnect = true;
+      throw e2;
     }
 
     // Auth error
@@ -188,8 +189,11 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     const message = (err as Error).message ?? String(err);
+    const needsReconnect = Boolean(
+      (err as Error & { needsReconnect?: boolean }).needsReconnect,
+    );
     return NextResponse.json(
-      { ok: false, error: message.slice(0, 600) },
+      { ok: false, error: message.slice(0, 600), needsReconnect },
       { status: 500 },
     );
   }

@@ -7,15 +7,18 @@ interface Props {
   csrfToken: string;
   onClose: () => void;
   onSuccess: () => void;
+  // Called when the error state needs the user to refresh GitHub scopes.
+  // The parent should close this modal and open the gh sign-in flow.
+  onReconnectGitHub: () => void;
 }
 
 type Phase =
   | { kind: "idle" }
   | { kind: "working" }
   | { kind: "success"; keyPath: string; alreadyRegistered: boolean }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; needsReconnect: boolean };
 
-export function SigningSetupModal({ csrfToken, onClose, onSuccess }: Props) {
+export function SigningSetupModal({ csrfToken, onClose, onSuccess, onReconnectGitHub }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 
   const run = async () => {
@@ -30,9 +33,14 @@ export function SigningSetupModal({ csrfToken, onClose, onSuccess }: Props) {
         error?: string;
         keyPath?: string;
         alreadyRegistered?: boolean;
+        needsReconnect?: boolean;
       };
       if (!res.ok || !data.ok) {
-        setPhase({ kind: "error", message: data.error ?? "Setup failed" });
+        setPhase({
+          kind: "error",
+          message: data.error ?? "Setup failed",
+          needsReconnect: Boolean(data.needsReconnect),
+        });
         return;
       }
       setPhase({
@@ -42,7 +50,7 @@ export function SigningSetupModal({ csrfToken, onClose, onSuccess }: Props) {
       });
       onSuccess();
     } catch (err) {
-      setPhase({ kind: "error", message: (err as Error).message });
+      setPhase({ kind: "error", message: (err as Error).message, needsReconnect: false });
     }
   };
 
@@ -138,22 +146,41 @@ export function SigningSetupModal({ csrfToken, onClose, onSuccess }: Props) {
             <pre className="mono mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-bg p-3 text-[11px] text-fg-muted">
               {phase.message}
             </pre>
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setPhase({ kind: "idle" })}
-                className="flex-1 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[13px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
-              >
-                Try again
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 rounded-full border border-border px-4 py-2 text-[13px] text-fg-muted transition-colors hover:border-fg-muted hover:text-fg"
-              >
-                Close
-              </button>
-            </div>
+            {phase.needsReconnect ? (
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={onReconnectGitHub}
+                  className="w-full rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[13px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
+                >
+                  Reconnect GitHub
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full rounded-full border border-border px-4 py-2 text-[13px] text-fg-muted transition-colors hover:border-fg-muted hover:text-fg"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPhase({ kind: "idle" })}
+                  className="flex-1 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[13px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
+                >
+                  Try again
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 rounded-full border border-border px-4 py-2 text-[13px] text-fg-muted transition-colors hover:border-fg-muted hover:text-fg"
+                >
+                  Close
+                </button>
+              </div>
+            )}
           </div>
         )}
 

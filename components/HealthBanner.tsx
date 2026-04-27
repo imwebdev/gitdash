@@ -163,6 +163,14 @@ export function HealthBanner({ csrfToken }: Props) {
             // Re-check health immediately so the signing warning clears.
             void fetchHealth();
           }}
+          onReconnectGitHub={() => {
+            // GitHub is missing the SSH-signing-key scope. Close the signing
+            // modal and open the gh sign-in flow, which will run
+            // `gh auth refresh -s admin:ssh_signing_key` (the missing scope is
+            // detected server-side and added to the device-flow prompt).
+            setSigningSetupOpen(false);
+            setSignInOpen(true);
+          }}
         />
       )}
     </>
