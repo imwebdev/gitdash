@@ -148,7 +148,7 @@ export function RemoteReposSection({ csrfToken, refreshKey = 0 }: Props) {
               <button
                 type="button"
                 onClick={() => setSignInOpen(true)}
-                className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+                className="flex items-center gap-2 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[14px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
               >
                 <Github className="h-4 w-4" />
                 Sign in to GitHub
