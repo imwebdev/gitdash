@@ -89,14 +89,14 @@ export function SigningSetupModal({ csrfToken, onClose, onSuccess }: Props) {
               <button
                 type="button"
                 onClick={run}
-                className="flex-1 rounded-lg bg-accent px-4 py-2.5 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+                className="flex-1 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[13px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
               >
                 Set up signing
               </button>
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 rounded-lg border border-border bg-bg px-4 py-2.5 text-[14px] text-fg-muted transition-colors hover:text-fg"
+                className="flex-1 rounded-full border border-border px-4 py-2 text-[13px] text-fg-muted transition-colors hover:border-fg-muted hover:text-fg"
               >
                 Cancel
               </button>
@@ -125,7 +125,7 @@ export function SigningSetupModal({ csrfToken, onClose, onSuccess }: Props) {
             <button
               type="button"
               onClick={onClose}
-              className="mt-4 w-full rounded-lg bg-accent px-4 py-2 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+              className="mt-4 w-full rounded-full border border-accent-clean/45 bg-accent-clean/15 px-4 py-2 text-[13px] font-medium text-accent-clean transition-colors hover:bg-accent-clean/25"
             >
               Close
             </button>
@@ -142,14 +142,14 @@ export function SigningSetupModal({ csrfToken, onClose, onSuccess }: Props) {
               <button
                 type="button"
                 onClick={() => setPhase({ kind: "idle" })}
-                className="flex-1 rounded-lg bg-accent px-4 py-2 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+                className="flex-1 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[13px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
               >
                 Try again
               </button>
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 rounded-lg border border-border bg-bg px-4 py-2 text-[14px] text-fg-muted transition-colors hover:text-fg"
+                className="flex-1 rounded-full border border-border px-4 py-2 text-[13px] text-fg-muted transition-colors hover:border-fg-muted hover:text-fg"
               >
                 Close
               </button>

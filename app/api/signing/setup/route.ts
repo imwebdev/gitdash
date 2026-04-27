@@ -127,11 +127,18 @@ async function registerKeyOnGithub(pubKey: string): Promise<boolean> {
       return false;
     }
 
-    // Scope missing — surface a clear error
-    if (errText.includes("write:ssh_signing_key") || errText.includes("missing required scope")) {
+    // Scope missing — surface a clear error.
+    // Triggers: gh's own hint ("needs the X scope"), 404 with ssh_signing_key
+    // mentioned (GitHub returns 404, not 403, when the token lacks the scope),
+    // or any of the read/write/admin variants.
+    const mentionsSshSigningScope = /ssh_signing_key/i.test(errText);
+    const mentionsScope = /needs the .* scope|missing required scope|requires .* scope/i.test(errText);
+    const is404 = /\b404\b|not found/i.test(errText);
+    if ((mentionsScope && mentionsSshSigningScope) || (is404 && mentionsSshSigningScope)) {
       throw new Error(
-        "Your GitHub account doesn't have the 'write:ssh_signing_key' permission. " +
-        "Please re-connect GitHub (use the 'Connect GitHub' button in the health banner) to grant the required scope, then try again.",
+        "GitHub needs an extra permission before gitdash can register a signing key. " +
+        "Close this dialog, click \"Connect GitHub\" in the banner, and complete the GitHub sign-in. " +
+        "After that, click \"Set up signing\" again and it will work.",
       );
     }
 

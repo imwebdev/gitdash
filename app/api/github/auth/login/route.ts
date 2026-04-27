@@ -10,12 +10,15 @@ import {
 
 // Scopes gitdash needs to do its job: `repo` for push/clone of private
 // repos, `workflow` so pushing branches with workflow files isn't blocked,
-// `write:ssh_signing_key` so gitdash can register SSH signing keys on GitHub.
+// `admin:ssh_signing_key` so gitdash can register SSH signing keys on GitHub
+// (the docs say `write:` is enough for POST /user/ssh_signing_keys but the
+// runtime returns 404 + "needs admin:ssh_signing_key scope" — trust the
+// runtime; admin includes write+read in the GitHub scope hierarchy anyway).
 // `gh auth login` requests these by default; users who installed gh through
 // other tools may have a token with fewer scopes. The health banner detects
 // that case and surfaces "Connect GitHub" — which lands here and runs
 // `gh auth refresh -s <missing>` to add the scopes without re-doing login.
-const REQUIRED_SCOPES = ["repo", "workflow", "write:ssh_signing_key"];
+const REQUIRED_SCOPES = ["repo", "workflow", "admin:ssh_signing_key"];
 
 export async function POST(req: NextRequest) {
   await bootstrap();
