@@ -171,7 +171,7 @@ export function GhSignInModal({ csrfToken, onClose, onSuccess }: Props) {
                   href={phase.verificationUri}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-3 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-3 text-[14px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
                 >
                   Open GitHub in browser
                   <ExternalLink className="h-4 w-4" />
@@ -210,7 +210,7 @@ export function GhSignInModal({ csrfToken, onClose, onSuccess }: Props) {
             <button
               type="button"
               onClick={onClose}
-              className="mt-4 w-full rounded-lg bg-accent px-4 py-2 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+              className="mt-4 w-full rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[14px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
             >
               Done
             </button>
@@ -232,7 +232,7 @@ export function GhSignInModal({ csrfToken, onClose, onSuccess }: Props) {
                   startedRef.current = false;
                   setPhase({ kind: "starting" });
                 }}
-                className="flex-1 rounded-lg bg-accent px-4 py-2 text-[14px] font-medium text-bg transition-colors hover:bg-accent-strong"
+                className="flex-1 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-2 text-[14px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
               >
                 Try again
               </button>
