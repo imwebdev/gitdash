@@ -94,6 +94,21 @@ export function isChunkLoadError(err: unknown): boolean {
 }
 
 /**
+ * Reset the auto-reload budget. The buttons in error.tsx / global-error.tsx
+ * call this before doing a manual reload so a user who's already burned
+ * through the auto-reload cap isn't quietly punished — their click should
+ * always cause a real reload.
+ */
+export function clearReloadBudget(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(RELOAD_BUDGET_KEY);
+  } catch {
+    // sessionStorage unavailable — nothing to clear.
+  }
+}
+
+/**
  * Returns true if the caller is allowed to auto-reload right now. Increments
  * the budget. Returns false once the cap is hit so the UI can fall back to
  * "show the friendly error and let the human decide".
