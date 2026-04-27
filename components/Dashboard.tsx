@@ -7,6 +7,7 @@ import type { GroupKind } from "./RepoCard";
 import { ThemeToggle } from "./ThemeToggle";
 import { RemoteReposSection } from "./RemoteReposSection";
 import { HealthBanner } from "./HealthBanner";
+import { BulkActionModal } from "./BulkActionModal";
 
 interface Props {
   initialRepos: RepoView[];
@@ -157,12 +158,19 @@ function bodyFor(kind: GroupKind, _n: number): string {
   }
 }
 
+interface BulkRunState {
+  bulkRunId: string;
+  repos: Array<{ id: number; name: string }>;
+}
+
 export function Dashboard({ initialRepos, csrfToken }: Props) {
   const [repos, setRepos] = useState<RepoView[]>(initialRepos);
   const [showSystem, setShowSystem] = useState(false);
   const [query, setQuery] = useState("");
   const [connected, setConnected] = useState(false);
   const [expandedRepoId, setExpandedRepoId] = useState<number | null>(null);
+  const [bulkRun, setBulkRun] = useState<BulkRunState | null>(null);
+  const [bulkInFlight, setBulkInFlight] = useState(false);
 
   useEffect(() => {
     if (expandedRepoId === null) return;
@@ -261,6 +269,37 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
     [groups],
   );
 
+  const behindCount = useMemo(
+    () => (groups.find((g) => g.kind === "pull")?.repos.length ?? 0),
+    [groups],
+  );
+
+  async function handlePullAll() {
+    if (bulkInFlight || behindCount === 0) return;
+    setBulkInFlight(true);
+    try {
+      const res = await fetch("/api/bulk/pull", {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+      });
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        alert(body.error ?? "Pull All failed — try again");
+        return;
+      }
+      const data = (await res.json()) as { bulkRunId: string };
+      const behindRepos = groups.find((g) => g.kind === "pull")?.repos ?? [];
+      setBulkRun({
+        bulkRunId: data.bulkRunId,
+        repos: behindRepos.map((r) => ({ id: r.id, name: r.displayName })),
+      });
+    } catch {
+      alert("Could not start Pull All — check your connection");
+    } finally {
+      setBulkInFlight(false);
+    }
+  }
+
   return (
     <main className="grain relative mx-auto max-w-[1280px] px-4 py-8 sm:px-10 sm:py-14">
       <header className="mb-8 flex flex-col gap-5 sm:mb-12 sm:gap-6 sm:flex-row sm:items-end sm:justify-between">
@@ -306,6 +345,16 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
             />
             {connected ? "live" : "reconnecting"}
           </div>
+          {behindCount > 0 && (
+            <button
+              type="button"
+              disabled={bulkInFlight}
+              onClick={() => { void handlePullAll(); }}
+              className="flex h-9 items-center gap-1.5 rounded-full bg-accent-pull px-4 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Pull All ({behindCount})
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </header>
@@ -343,6 +392,14 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
         <span>{repos.length} tracked</span>
         <span className="mono">localhost:7420</span>
       </footer>
+
+      {bulkRun && (
+        <BulkActionModal
+          bulkRunId={bulkRun.bulkRunId}
+          repos={bulkRun.repos}
+          onClose={() => setBulkRun(null)}
+        />
+      )}
     </main>
   );
 }
