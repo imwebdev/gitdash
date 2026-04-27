@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { hardReload, tryConsumeReloadBudget } from "@/lib/autoheal";
 
 const BUNDLED_COMMIT = process.env.NEXT_PUBLIC_GITDASH_COMMIT ?? "";
+const AUTO_RELOAD_AFTER_MS = 5_000;
 
 export function UpdateBanner() {
   const [serverCommit, setServerCommit] = useState<string | null>(null);
+  const [autoReloadAt, setAutoReloadAt] = useState<number | null>(null);
 
   useEffect(() => {
     // Don't poll if we have nothing to compare against (e.g. tarball install)
@@ -47,11 +50,28 @@ export function UpdateBanner() {
     };
   }, []);
 
-  // No BUNDLED_COMMIT means we can't compare — render nothing
-  if (!BUNDLED_COMMIT) return null;
+  const mismatch = !!(BUNDLED_COMMIT && serverCommit && serverCommit !== BUNDLED_COMMIT);
 
-  // Still loading or commits match — no banner needed
-  if (!serverCommit || serverCommit === BUNDLED_COMMIT) return null;
+  useEffect(() => {
+    if (!mismatch) {
+      setAutoReloadAt(null);
+      return;
+    }
+    // Auto-reload onto the new build so a stale tab can't keep loading dead
+    // chunk hashes. The reload-budget guard prevents loops if the mismatch
+    // somehow persists across reloads.
+    if (!tryConsumeReloadBudget()) return;
+    const fireAt = Date.now() + AUTO_RELOAD_AFTER_MS;
+    setAutoReloadAt(fireAt);
+    const t = setTimeout(() => hardReload(), AUTO_RELOAD_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [mismatch]);
+
+  if (!mismatch) return null;
+
+  const secondsLeft = autoReloadAt
+    ? Math.max(0, Math.ceil((autoReloadAt - Date.now()) / 1_000))
+    : null;
 
   return (
     <div
@@ -63,16 +83,19 @@ export function UpdateBanner() {
       )}
       role="status"
     >
-      <span>A new version of gitdash is available.</span>
+      <span>
+        New gitdash version detected
+        {secondsLeft !== null ? ` — reloading in ${secondsLeft}s.` : "."}
+      </span>
       <button
         type="button"
-        onClick={() => window.location.reload()}
+        onClick={() => hardReload()}
         className={cn(
           "rounded-md bg-accent-positive px-3 py-1 text-sm font-medium",
           "text-bg hover:opacity-90",
         )}
       >
-        Reload
+        Reload now
       </button>
     </div>
   );

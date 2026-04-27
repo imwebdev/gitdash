@@ -24,6 +24,17 @@ const nextConfig = {
   serverExternalPackages: ["better-sqlite3", "chokidar"],
   typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: false },
+  // Self-hosted, LAN-only tool — minified stack traces are useless when
+  // debugging a beginner's "Application error" report. Adds ~20% to bundle
+  // size; worth it for the diagnostic value.
+  productionBrowserSourceMaps: true,
+  // Pin BUILD_ID to the commit + buildAt timestamp so chunk hashes stay
+  // stable for a given commit (deterministic) but change when the build
+  // changes. Combined with the UpdateBanner version poll, this lets stale
+  // tabs auto-reload onto the new build instead of crashing on missing
+  // chunks. Falls back to Next's default when no commit is available
+  // (tarball install, dirty checkout, etc.).
+  generateBuildId: async () => (commit ? `${commit}-${builtAt}` : null),
   env: {
     NEXT_PUBLIC_GITDASH_VERSION: version,
     NEXT_PUBLIC_GITDASH_COMMIT: commit,

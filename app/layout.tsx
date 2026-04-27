@@ -3,6 +3,7 @@ import { Instrument_Serif, Instrument_Sans, IBM_Plex_Mono } from "next/font/goog
 import "./globals.css";
 import { VersionBadge } from "@/components/VersionBadge";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { ChunkErrorGuard } from "@/components/ChunkErrorGuard";
 
 const serif = Instrument_Serif({
   subsets: ["latin"],
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
       <body suppressHydrationWarning>
+        <ChunkErrorGuard />
         {children}
         <UpdateBanner />
         <VersionBadge />

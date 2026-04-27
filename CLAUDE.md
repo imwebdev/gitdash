@@ -127,6 +127,33 @@ Edit `lib/db/schema.ts` (add to `CREATE TABLE` — there's no migrations system,
 
 When extending: keep these guards. Don't reach for `bash -c`, don't bypass the allowlists.
 
+## Auto-heal contract — NEVER show "Application error: a client-side exception"
+
+That bare Next.js error page is a North Star violation: a beginner stuck on it has nothing to click. Four layers prevent it from ever being seen, and you must keep all four working when you change client code:
+
+1. **`app/global-error.tsx`** — root error boundary. Replaces Next's default. Detects `ChunkLoadError` (or any chunk-load pattern) via `lib/autoheal.ts::isChunkLoadError` and hard-reloads immediately. For other errors, shows a friendly UI and auto-reloads after 5s.
+2. **`app/error.tsx`** — page-level boundary. Same contract, with `reset()` exposed as a soft retry. Catches errors thrown inside the dashboard tree.
+3. **`components/ChunkErrorGuard.tsx`** — mounted once in `app/layout.tsx`. Subscribes to `window.error` and `window.unhandledrejection` to catch async chunk failures (lazy `import()`, dynamic CSS) that bypass React boundaries because they happen outside the render cycle.
+4. **`components/UpdateBanner.tsx` + `next.config.mjs::generateBuildId`** — `BUILD_ID` is pinned to `<commit>-<builtAt>`. The banner polls `/api/version` every 30s; on commit mismatch it auto-`hardReload`s after 5s, so a stale tab can't keep pointing at chunk hashes the new build deleted.
+
+All four call into `lib/autoheal.ts`, which provides:
+
+- `isChunkLoadError(err)` — pattern-matches the known ChunkLoadError shapes.
+- `tryConsumeReloadBudget()` — sessionStorage-backed reload-loop guard. Caps auto-reloads at 3 inside a 30s window so a truly broken build can't spin the browser. After the budget is exhausted, the boundaries fall back to the friendly UI ("Auto-reload paused — click Reload to try once more").
+- `hardReload()` — `window.location.replace` with a cache-busting `_gitdash_heal=<ts>` query so proxies / disk cache can't keep handing back the stale HTML.
+
+**When adding new client features:**
+- Don't catch errors silently in a way that hides them from the boundaries — let them bubble so the auto-heal can run.
+- If you add a new lazy `import()` or dynamic chunk, you don't need to do anything special; `ChunkErrorGuard` already covers it.
+- If you bump the version-poll interval or move `/api/version`, update `UpdateBanner` and re-test the auto-reload path.
+- `lib/autoheal.ts` must remain client-safe (no `node:` imports). It's imported by both server-rendered (`global-error.tsx`) and client (`UpdateBanner`, boundaries) code.
+
+**How to verify locally** (do this before merging anything that touches the auto-heal layer):
+1. Build, start, open the dashboard.
+2. Throw a synthetic error from a component (`throw new Error('boom')`) → `app/error.tsx` should render with auto-reload countdown.
+3. Throw `new Error('ChunkLoadError: Loading chunk 5 failed')` from a component → page should hard-reload within ~1s.
+4. Trigger the reload-loop guard (throw on every render) → after 3 reloads in 30s the friendly UI sticks instead of looping.
+
 ## Things that bite
 
 - The scheduler/watcher/store singletons live on `globalThis` via `Symbol.for(...)` keys to survive Next.js HMR. Don't `new Scheduler()` directly anywhere else.
@@ -134,3 +161,5 @@ When extending: keep these guards. Don't reach for `bash -c`, don't bypass the a
 - `next start` (and `bin/gitdash start`) loads the build artifact ONCE at boot. After `npm run build`, the running process must be restarted to pick up changes — there's no hot reload. Killing the listener PID and re-running `bin/gitdash start` is the supported flow.
 - `gh` ETag cache lives in the SQLite DB. If you wipe the DB, expect a brief burst of full GitHub API calls until ETags re-populate.
 - Repos with `.git` as a *file* (worktrees) are handled in `detectWeirdFlags` — preserve that path resolution if you touch it.
+- **`JSON.parse` on external data is always wrapped in try/catch.** Includes SSE event payloads, `fetch().then(r => r.json())`, `localStorage`, and any `postMessage` handler. A single malformed frame must not throw out of an event listener. The Dashboard SSE handlers (`components/Dashboard.tsx:192-205`) are the canonical pattern: try/catch + `console.error` + drop the frame. Without this guard the auto-heal boundary catches the throw, but you eat a full reload for what could have been a one-frame skip.
+- **`productionBrowserSourceMaps: true` stays on in `next.config.mjs`.** Self-hosted, LAN-only tool, no public attack surface. Debugging a beginner's "it crashed" report on a minified stack is impossible. The 20% bundle-size hit is worth it. Don't turn it off "to ship faster".

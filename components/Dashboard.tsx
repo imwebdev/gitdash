@@ -190,12 +190,20 @@ export function Dashboard({ initialRepos, csrfToken }: Props) {
         setConnected(true);
       });
       source.addEventListener("snapshot", (ev) => {
-        const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
-        setRepos(data.repos);
+        try {
+          const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
+          setRepos(data.repos);
+        } catch (err) {
+          console.error("[gitdash] dropped malformed snapshot SSE frame:", err);
+        }
       });
       source.addEventListener("bulk", (ev) => {
-        const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
-        setRepos(data.repos);
+        try {
+          const data = JSON.parse((ev as MessageEvent).data) as { repos: RepoView[] };
+          setRepos(data.repos);
+        } catch (err) {
+          console.error("[gitdash] dropped malformed bulk SSE frame:", err);
+        }
       });
       source.addEventListener("update", async () => {
         try {
