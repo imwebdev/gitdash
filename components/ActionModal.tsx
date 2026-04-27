@@ -34,6 +34,7 @@ const COPY: Record<string, { verb: string; confirm?: string }> = {
   "publish-to-github": { verb: "Publishing this repo to GitHub" },
   "open-editor": { verb: "Opening in your editor" },
   "open-terminal": { verb: "Opening a terminal" },
+  "create-pr": { verb: "Creating a Pull Request on GitHub" },
 };
 
 const PUBLISH_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -68,6 +69,8 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const [phase, setPhase] = useState<Phase>(needsConfirm ? "confirm" : "running");
   const [log, setLog] = useState<string[]>([]);
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const [recoverAction, setRecoverAction] = useState<string | null>(null);
+  const [recoverRunning, setRecoverRunning] = useState(false);
   const [commitMessage, setCommitMessage] = useState<string>("");
   const [publishName, setPublishName] = useState<string>(repo.displayName);
   const [publishVisibility, setPublishVisibility] = useState<"private" | "public">("private");
@@ -214,6 +217,11 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
         es.addEventListener("line", (ev: MessageEvent) => {
           const data = JSON.parse(ev.data) as { text: string };
           setLog((l) => [...l, data.text]);
+          // Detect structured recovery marker emitted by the backend
+          const markerMatch = data.text.match(/^\[gitdash:recover\]\s+(\S+)$/);
+          if (markerMatch) {
+            setRecoverAction(markerMatch[1] ?? null);
+          }
         });
         es.addEventListener("done", (ev: MessageEvent) => {
           const data = JSON.parse(ev.data) as { exitCode: number };
@@ -354,23 +362,82 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
         )}
 
         {phase !== "confirm" && (
-          <footer className="flex items-center justify-between px-6 py-3 text-[12px]">
-            <div className={cn(
-              "uppercase tracking-wider",
-              phase === "running" && "text-fg-dim",
-              phase === "done" && "text-accent-clean",
-              phase === "error" && "text-accent-attention",
-            )}>
-              {phase === "running" && "running"}
-              {phase === "done" && "done"}
-              {phase === "error" && `error${exitCode !== null ? ` · exit ${exitCode}` : ""}`}
+          <footer className="flex flex-col gap-3 px-6 py-4">
+            <div className="flex items-center justify-between text-[12px]">
+              <div className={cn(
+                "uppercase tracking-wider",
+                phase === "running" && "text-fg-dim",
+                phase === "done" && "text-accent-clean",
+                phase === "error" && "text-accent-attention",
+              )}>
+                {phase === "running" && "running"}
+                {phase === "done" && "done"}
+                {phase === "error" && `error${exitCode !== null ? ` · exit ${exitCode}` : ""}`}
+              </div>
+              <button
+                onClick={onClose}
+                className="rounded-full border border-border px-3 py-1 text-fg-muted hover:border-fg-muted hover:text-fg"
+              >
+                Close
+              </button>
             </div>
-            <button
-              onClick={onClose}
-              className="rounded-full border border-border px-3 py-1 text-fg-muted hover:border-fg-muted hover:text-fg"
-            >
-              Close
-            </button>
+            {phase === "error" && recoverAction === "create-pr" && (
+              <button
+                disabled={recoverRunning}
+                onClick={async () => {
+                  if (recoverRunning) return;
+                  setRecoverRunning(true);
+                  setLog([]);
+                  setExitCode(null);
+                  setRecoverAction(null);
+                  setPhase("running");
+                  try {
+                    const res = await fetch(`/api/repos/${repo.id}/actions/create-pr`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+                      body: JSON.stringify({}),
+                    });
+                    if (!res.ok) {
+                      const text = await res.text();
+                      setLog([`HTTP ${res.status}: ${text}`]);
+                      setPhase("error");
+                      setRecoverRunning(false);
+                      return;
+                    }
+                    const payload = (await res.json()) as { runId: string };
+                    const es = new EventSource(`/api/actions/${payload.runId}/stream`);
+                    esRef.current = es;
+                    es.addEventListener("line", (ev: MessageEvent) => {
+                      const data = JSON.parse(ev.data) as { text: string };
+                      setLog((l) => [...l, data.text]);
+                    });
+                    es.addEventListener("done", (ev: MessageEvent) => {
+                      const data = JSON.parse(ev.data) as { exitCode: number };
+                      setExitCode(data.exitCode);
+                      setPhase(data.exitCode === 0 ? "done" : "error");
+                      setRecoverRunning(false);
+                      es.close();
+                    });
+                    es.addEventListener("error", () => {
+                      setPhase("error");
+                      setRecoverRunning(false);
+                      es.close();
+                    });
+                  } catch (err) {
+                    setLog([String(err)]);
+                    setPhase("error");
+                    setRecoverRunning(false);
+                  }
+                }}
+                className={cn(
+                  "w-full rounded-full border px-5 py-2 text-[13px] font-medium transition-all",
+                  "border-accent-push/45 bg-accent-push/15 text-accent-push hover:bg-accent-push/25",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                )}
+              >
+                {recoverRunning ? "Opening GitHub…" : "Create Pull Request"}
+              </button>
+            )}
           </footer>
         )}
       </div>

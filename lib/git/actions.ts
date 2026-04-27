@@ -19,7 +19,8 @@ export type ActionName =
   | "open-terminal"
   | "commit"
   | "commit-push"
-  | "publish-to-github";
+  | "publish-to-github"
+  | "create-pr";
 
 export interface PublishOptions {
   name: string;
@@ -119,6 +120,22 @@ export function startAction(opts: StartOptions): ActionRun {
     return run;
   }
 
+  if (opts.action === "create-pr") {
+    setImmediate(() => {
+      executeCreatePr(run, opts.repoPath, opts.branch).catch((err) => {
+        run.emitter.emit("done", { exitCode: -1 });
+        run.exitCode = -1;
+        run.finishedAt = Date.now();
+        recordRunFinish(run);
+        run.lines.push(`[fatal] ${(err as Error).message}`);
+      });
+    });
+    getDb().prepare(
+      "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
+    ).run(opts.repoId, opts.action, run.startedAt);
+    return run;
+  }
+
   // push gets special treatment: fetch-rebase first, then the actual push.
   if (opts.action === "push") {
     setImmediate(() => {
@@ -186,6 +203,8 @@ function buildArgs(action: ActionName, branch: string | null): string[] {
       return [];
     case "publish-to-github":
       return [];
+    case "create-pr":
+      return [];
   }
 }
 
@@ -228,6 +247,8 @@ function friendlyActionLabel(action: ActionName): string {
       return "Commit & push";
     case "publish-to-github":
       return "Publish to GitHub";
+    case "create-pr":
+      return "Create Pull Request";
   }
 }
 
@@ -444,7 +465,11 @@ async function executePush(run: ActionRun, repoPath: string, branch: string | nu
   const pushCode = await spawnGitStep(run, emit, pushArgs, repoPath);
   if (pushCode !== 0) {
     emit(`[gitdash] ✗ ${friendlyStepLabel("push")} didn't complete (exit ${pushCode}).`);
-    emitHint(emit, run.lines);
+    if (isProtectedBranchError(run.lines)) {
+      emitProtectedBranchHint(emit);
+    } else {
+      emitHint(emit, run.lines);
+    }
     run.finishedAt = Date.now();
     run.exitCode = pushCode;
     recordRunFinish(run);
@@ -531,8 +556,12 @@ async function executeCommit(
   const pushCode = await spawnGitStep(run, emit, pushArgs, repoPath);
   if (pushCode !== 0) {
     emit(`[gitdash] ✗ ${friendlyStepLabel("push")} didn't complete (exit ${pushCode}).`);
-    emit("[gitdash] hint: Your commit was saved locally. Once you fix the push issue (often a GitHub auth problem), click the Push button on this row to retry.");
-    emitHint(emit, run.lines);
+    if (isProtectedBranchError(run.lines)) {
+      emitProtectedBranchHint(emit);
+    } else {
+      emit("[gitdash] hint: Your commit was saved locally. Once you fix the push issue (often a GitHub auth problem), click the Push button on this row to retry.");
+      emitHint(emit, run.lines);
+    }
     run.finishedAt = Date.now();
     run.exitCode = pushCode;
     recordRunFinish(run);
@@ -606,16 +635,163 @@ async function executePublishToGithub(
   run.emitter.emit("done", { exitCode: code });
 }
 
+/** Returns true if the accumulated lines indicate a GH013 protected-branch rejection. */
+function isProtectedBranchError(lines: readonly string[]): boolean {
+  const combined = lines.join("\n");
+  return /GH013|protected branch hook declined|pre-receive hook declined.*protected/i.test(combined);
+}
+
+/** Emit a recovery marker the UI watches for, plus a human-readable hint. */
+function emitProtectedBranchHint(emit: (text: string) => void): void {
+  emit("[gitdash] hint: This branch is protected on GitHub — direct pushes are blocked by your repository settings.");
+  emit("[gitdash] hint: You need to push to a separate branch and open a Pull Request for review.");
+  emit("[gitdash:recover] create-pr");
+}
+
+/**
+ * Sanitize a string into a safe branch-name slug:
+ * lowercase, non-alphanumeric → '-', collapse repeats, max 40 chars, no trailing '-'.
+ */
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40)
+    .replace(/-$/, "");
+}
+
+const DEFAULT_BRANCH_NAMES = new Set(["main", "master", "trunk"]);
+
+/**
+ * Multi-step action:
+ * 1. Read current branch.
+ * 2. If on a default branch, create a new feature branch.
+ * 3. Push the branch to origin with -u.
+ * 4. Open the GitHub PR form in the browser via `gh pr create --fill --web`.
+ */
+async function executeCreatePr(run: ActionRun, repoPath: string, _snapshotBranch: string | null): Promise<void> {
+  const emit = (text: string) => {
+    run.lines.push(text);
+    run.emitter.emit("line", text);
+  };
+
+  // Step 1: resolve current branch
+  emit("[gitdash] Step 1/4: Checking current branch…");
+  let currentBranch: string;
+  try {
+    const result = await execFileAsync(
+      "git",
+      ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"],
+      { timeout: 5_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+    );
+    currentBranch = result.stdout.trim();
+  } catch (err) {
+    emit(`[gitdash] ✗ Could not determine current branch: ${(err as Error).message}`);
+    run.finishedAt = Date.now();
+    run.exitCode = 1;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 1 });
+    return;
+  }
+
+  if (!currentBranch || currentBranch === "HEAD") {
+    emit("[gitdash] ✗ You are in a detached HEAD state. Checkout a branch first.");
+    run.finishedAt = Date.now();
+    run.exitCode = 1;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 1 });
+    return;
+  }
+
+  emit(`[gitdash] Current branch: ${currentBranch}`);
+
+  // Step 2: if on a default branch, create a new feature branch
+  let targetBranch = currentBranch;
+  if (DEFAULT_BRANCH_NAMES.has(currentBranch)) {
+    emit("[gitdash] Step 2/4: Creating a new feature branch…");
+
+    // Get last commit subject for the slug
+    let commitSubject = "";
+    try {
+      const logResult = await execFileAsync(
+        "git",
+        ["-C", repoPath, "log", "-1", "--format=%s"],
+        { timeout: 5_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+      );
+      commitSubject = logResult.stdout.trim();
+    } catch {
+      // non-fatal; use empty slug
+    }
+
+    const slug = slugify(commitSubject) || "changes";
+    const timestamp = Math.floor(Date.now() / 1000);
+    targetBranch = `gitdash/${slug}-${timestamp}`;
+
+    // assertSafeRef before passing to git
+    try {
+      assertSafeRef(targetBranch);
+    } catch {
+      // Fallback to a simple safe name if slug contains anything unexpected
+      targetBranch = `gitdash/changes-${timestamp}`;
+      assertSafeRef(targetBranch);
+    }
+
+    emit(`[gitdash] New branch: ${targetBranch}`);
+    const checkoutCode = await spawnGitStep(run, emit, ["checkout", "-b", targetBranch], repoPath);
+    if (checkoutCode !== 0) {
+      emit(`[gitdash] ✗ Could not create branch '${targetBranch}' (exit ${checkoutCode}).`);
+      run.finishedAt = Date.now();
+      run.exitCode = checkoutCode;
+      recordRunFinish(run);
+      run.emitter.emit("done", { exitCode: checkoutCode });
+      return;
+    }
+  } else {
+    emit("[gitdash] Step 2/4: Already on a feature branch — skipping branch creation.");
+  }
+
+  // Step 3: push the branch
+  emit(`[gitdash] Step 3/4: Pushing branch '${targetBranch}' to origin…`);
+  const pushCode = await spawnGitStep(run, emit, ["push", "-u", "origin", "HEAD"], repoPath);
+  if (pushCode !== 0) {
+    emit(`[gitdash] ✗ Push failed (exit ${pushCode}).`);
+    emitHint(emit, run.lines);
+    run.finishedAt = Date.now();
+    run.exitCode = pushCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: pushCode });
+    return;
+  }
+
+  // Step 4: open the GitHub PR form in the browser
+  emit("[gitdash] Step 4/4: Opening GitHub Pull Request form in your browser…");
+  const prCode = await spawnGhStep(run, emit, ["pr", "create", "--fill", "--web"], repoPath);
+  run.finishedAt = Date.now();
+  run.exitCode = prCode;
+  recordRunFinish(run);
+  if (prCode === 0) {
+    emit("[gitdash] ✓ Your browser opened the Pull Request form on GitHub. Fill in the details and submit!");
+  } else {
+    emit(`[gitdash] ✗ Could not open GitHub PR form (exit ${prCode}).`);
+    emitHint(emit, run.lines);
+  }
+  run.emitter.emit("done", { exitCode: prCode });
+}
+
 function spawnGhStep(
   run: ActionRun,
   emit: (text: string) => void,
   args: string[],
+  cwd?: string,
 ): Promise<number> {
   return new Promise<number>((resolve) => {
     emit(`$ gh ${args.join(" ")}`);
     const child = spawn("gh", args, {
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       stdio: ["ignore", "pipe", "pipe"],
+      cwd,
     });
     run.child = child;
     const onData = (chunk: Buffer) => {
@@ -746,6 +922,7 @@ const VALID_ACTIONS: ReadonlySet<string> = new Set([
   "commit",
   "commit-push",
   "publish-to-github",
+  "create-pr",
 ]);
 
 export function isValidAction(value: string): value is ActionName {
