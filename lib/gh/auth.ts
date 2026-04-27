@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { runGh } from "@/lib/git/exec";
+import { runGh, GitCommandError } from "@/lib/git/exec";
 
 const DEVICE_CODE_RE = /code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})/i;
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -29,14 +29,18 @@ export interface StartResult {
 }
 
 /**
- * Spawn `gh auth login --web` and parse the device code from its stderr.
- * Resolves once the device code is available so the UI can show it
- * immediately. The OAuth completion runs in the background and is observable
- * via `getAuthState(runId)`.
+ * Spawn a `gh auth ...` command that drives the OAuth device flow and parse
+ * the device code from its stderr. Resolves once the device code is available
+ * so the UI can show it immediately. The OAuth completion runs in the
+ * background and is observable via `getAuthState(runId)`.
+ *
+ * Used for both initial login (`gh auth login --web`) and scope upgrades
+ * (`gh auth refresh -s <scopes>`) — the device-flow output format is the
+ * same in both cases.
  *
  * Throws if `gh` itself can't be spawned (not installed, not on PATH).
  */
-export function startGhAuthLogin(): Promise<StartResult> {
+function spawnGhAuthDeviceFlow(ghArgs: string[]): Promise<StartResult> {
   return new Promise((resolve, reject) => {
     const runId = newRunId();
     let stderrBuf = "";
@@ -46,19 +50,10 @@ export function startGhAuthLogin(): Promise<StartResult> {
 
     let child;
     try {
-      child = spawn(
-        "gh",
-        [
-          "auth",
-          "login",
-          "--web",
-          "--hostname",
-          "github.com",
-          "--git-protocol",
-          "https",
-        ],
-        { stdio: ["pipe", "pipe", "pipe"], env: process.env },
-      );
+      child = spawn("gh", ghArgs, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: process.env,
+      });
     } catch (err) {
       reject(err);
       return;
@@ -169,6 +164,46 @@ export function startGhAuthLogin(): Promise<StartResult> {
   });
 }
 
+/**
+ * Initial sign-in for an unauthenticated machine. Drives `gh auth login`
+ * through the OAuth device flow.
+ */
+export function startGhAuthLogin(): Promise<StartResult> {
+  return spawnGhAuthDeviceFlow([
+    "auth",
+    "login",
+    "--web",
+    "--hostname",
+    "github.com",
+    "--git-protocol",
+    "https",
+  ]);
+}
+
+/**
+ * Scope upgrade for an already-authenticated machine. `gh auth refresh -s`
+ * goes through the same device flow but the GitHub authorize page asks the
+ * user to grant the additional scopes on top of what they already have.
+ *
+ * This is what powers the "Connect GitHub" button on the
+ * `gh-missing-repo-scope` health warning.
+ */
+export function startGhAuthRefresh(scopes: string[]): Promise<StartResult> {
+  if (scopes.length === 0) {
+    return Promise.reject(
+      new Error("startGhAuthRefresh requires at least one scope"),
+    );
+  }
+  return spawnGhAuthDeviceFlow([
+    "auth",
+    "refresh",
+    "--hostname",
+    "github.com",
+    "-s",
+    scopes.join(","),
+  ]);
+}
+
 export function getAuthState(runId: string): AuthState | undefined {
   return sessions.get(runId)?.state;
 }
@@ -187,6 +222,37 @@ export async function isGhAuthenticated(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Returns the OAuth scopes currently granted to `gh`'s stored token. Parses
+ * the `Token scopes:` line from `gh auth status`. Returns an empty array if
+ * gh isn't authenticated, isn't installed, or the line can't be parsed.
+ */
+export async function getGhAuthScopes(): Promise<string[]> {
+  // `gh auth status` writes the scope line to stderr by design and exits 0
+  // when authenticated. When not authenticated it exits 1 — runGh throws a
+  // GitCommandError in that case, but the error carries the captured output
+  // so we can still parse from it (and return [] if the line isn't there).
+  let text: string;
+  try {
+    const { stdout, stderr } = await runGh(["auth", "status"], {
+      timeoutMs: 10_000,
+    });
+    text = `${stdout}\n${stderr}`;
+  } catch (err) {
+    if (err instanceof GitCommandError) {
+      text = `${err.stdout}\n${err.stderr}`;
+    } else {
+      return [];
+    }
+  }
+  const m = text.match(/Token scopes?:\s*(.+)/i);
+  if (!m || !m[1]) return [];
+  return m[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean);
 }
 
 /**
