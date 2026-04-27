@@ -54,7 +54,19 @@ const SYSTEM_REPO_HINTS = [
   /\/\.(nvm|mcp|codex|nemoclaw|openclaw|config|local|cache|claude|npm|pnpm-store|yarn|pyenv|rustup|cargo|rbenv|docker|vscode-server)\b/,
 ];
 
+// Captured once at module load. The launcher (`bin/gitdash`) cd's into the
+// project root before exec'ing next, so `process.cwd()` is the gitdash repo
+// path for any process serving the dashboard. Tests / scripts that import
+// this module from a different cwd will get a different self-path, which is
+// fine — the only effect is that those contexts won't apply the self-exempt.
+const SELF_REPO_PATH = path.resolve(process.cwd());
+
 export function isSystemRepoPath(repoPath: string): boolean {
+  // Never hide gitdash from its own dashboard. The default install location
+  // ~/.local/share/gitdash matches the /\.local\b/ system-repo hint, which
+  // would otherwise hide the user's primary tool until they discover the
+  // 'show system repos' toggle.
+  if (path.resolve(repoPath) === SELF_REPO_PATH) return false;
   return SYSTEM_REPO_HINTS.some((re) => re.test(repoPath));
 }
 
