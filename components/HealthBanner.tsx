@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertOctagon, AlertTriangle, Check, RefreshCw, X } from "lucide-react";
 import { GhSignInModal } from "./GhSignInModal";
+import { SigningSetupModal } from "./SigningSetupModal";
 import { cn } from "@/lib/utils";
 
 interface HealthWarning {
@@ -11,9 +12,10 @@ interface HealthWarning {
     | "gh-not-installed"
     | "gh-not-authenticated"
     | "gh-missing-repo-scope"
-    | "git-not-installed";
+    | "git-not-installed"
+    | "signing-not-configured";
   message: string;
-  action: "open-sign-in" | null;
+  action: "open-sign-in" | "open-signing-setup" | null;
   installHints?: string[];
 }
 
@@ -42,6 +44,7 @@ export function HealthBanner({ csrfToken }: Props) {
     }
   });
   const [signInOpen, setSignInOpen] = useState(false);
+  const [signingSetupOpen, setSigningSetupOpen] = useState(false);
 
   const fetchHealth = useCallback(async (opts?: { surfaceFeedback?: boolean }) => {
     setLoading(true);
@@ -85,10 +88,13 @@ export function HealthBanner({ csrfToken }: Props) {
   };
 
   const visible = warnings.filter((w) => !dismissed.has(w.code));
-  if (visible.length === 0) return null;
+  // Keep modals mounted even when warnings clear so the success state can be
+  // read before the user closes them.
+  const sectionVisible = visible.length > 0;
 
   return (
     <>
+      {sectionVisible && (
       <section
         aria-label="GitHub connection status"
         className="mb-6 flex flex-col gap-3 rounded-xl border border-border-subtle bg-bg-elevated/80 p-4 shadow-sm sm:p-5"
@@ -97,7 +103,13 @@ export function HealthBanner({ csrfToken }: Props) {
           <WarningRow
             key={w.code}
             warning={w}
-            onAction={() => setSignInOpen(true)}
+            onAction={() => {
+              if (w.action === "open-signing-setup") {
+                setSigningSetupOpen(true);
+              } else {
+                setSignInOpen(true);
+              }
+            }}
             onDismiss={() => dismiss(w.code)}
           />
         ))}
@@ -128,6 +140,7 @@ export function HealthBanner({ csrfToken }: Props) {
           </button>
         </div>
       </section>
+      )}
 
       {signInOpen && (
         <GhSignInModal
@@ -137,6 +150,17 @@ export function HealthBanner({ csrfToken }: Props) {
             setSignInOpen(false);
             // Force a re-check immediately so the banner updates without
             // waiting for the 30s poll.
+            void fetchHealth();
+          }}
+        />
+      )}
+
+      {signingSetupOpen && (
+        <SigningSetupModal
+          csrfToken={csrfToken}
+          onClose={() => setSigningSetupOpen(false)}
+          onSuccess={() => {
+            // Re-check health immediately so the signing warning clears.
             void fetchHealth();
           }}
         />
@@ -173,6 +197,16 @@ function WarningRow({
             className="mt-3 inline-flex items-center gap-2 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-1.5 text-[12.5px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
           >
             Connect GitHub
+          </button>
+        )}
+
+        {warning.action === "open-signing-setup" && (
+          <button
+            type="button"
+            onClick={onAction}
+            className="mt-3 inline-flex items-center gap-2 rounded-full border border-accent-push/45 bg-accent-push/15 px-4 py-1.5 text-[12.5px] font-medium text-accent-push transition-colors hover:bg-accent-push/25"
+          >
+            Set up signing
           </button>
         )}
 

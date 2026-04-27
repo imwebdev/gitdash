@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFile } from "node:fs/promises";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,11 +18,20 @@ export interface GitStatus {
   version: string | null;
 }
 
+export interface SigningStatus {
+  configured: boolean;       // gpg.format=ssh AND commit.gpgsign=true AND user.signingkey set
+  format: "ssh" | "gpg" | "x509" | "openpgp" | null;
+  signingKey: string | null;
+  gpgSign: boolean;
+  registeredOnGithub: boolean; // signingKey content matches one in /user/ssh_signing_keys (when ssh)
+}
+
 export type HealthWarningCode =
   | "gh-not-installed"
   | "gh-not-authenticated"
   | "gh-missing-repo-scope"
-  | "git-not-installed";
+  | "git-not-installed"
+  | "signing-not-configured";
 
 export interface HealthWarning {
   severity: "error" | "warning";
@@ -29,13 +39,14 @@ export interface HealthWarning {
   message: string;
   // When set, the UI should expose a button that opens the in-UI sign-in
   // modal instead of a copy-paste shell command (NORTH STAR: no terminal).
-  action: "open-sign-in" | null;
+  action: "open-sign-in" | "open-signing-setup" | null;
   installHints?: string[];
 }
 
 export interface HealthResult {
   gh: GhStatus;
   git: GitStatus;
+  signing: SigningStatus;
   warnings: HealthWarning[];
 }
 
@@ -116,6 +127,71 @@ async function checkGit(): Promise<GitStatus> {
   return { installed: true, version: line };
 }
 
+async function checkSigning(gh: GhStatus): Promise<SigningStatus> {
+  const [formatRes, gpgSignRes, signingKeyRes] = await Promise.all([
+    runWithTimeout("git", ["config", "--global", "--get", "gpg.format"]),
+    runWithTimeout("git", ["config", "--global", "--get", "commit.gpgsign"]),
+    runWithTimeout("git", ["config", "--global", "--get", "user.signingkey"]),
+  ]);
+
+  const format = formatRes.ok ? (formatRes.stdout.trim() as SigningStatus["format"]) : null;
+  const gpgSign = gpgSignRes.ok ? gpgSignRes.stdout.trim().toLowerCase() === "true" : false;
+  const signingKeyRaw = signingKeyRes.ok ? signingKeyRes.stdout.trim() : null;
+
+  // Resolve the public key content if key is a path
+  let resolvedPubKey: string | null = null;
+  if (signingKeyRaw) {
+    if (signingKeyRaw.startsWith("ssh-") || signingKeyRaw.startsWith("ecdsa-")) {
+      // Literal public key string
+      resolvedPubKey = signingKeyRaw;
+    } else {
+      // Treat as a file path — read the pub key file
+      const pubPath = signingKeyRaw.endsWith(".pub") ? signingKeyRaw : `${signingKeyRaw}.pub`;
+      try {
+        const content = await readFile(pubPath, "utf8");
+        resolvedPubKey = content.split("\n")[0]?.trim() ?? null;
+      } catch {
+        resolvedPubKey = null;
+      }
+    }
+  }
+
+  const configured =
+    format === "ssh" &&
+    gpgSign &&
+    signingKeyRaw !== null;
+
+  // Check if the signing key is registered on GitHub
+  let registeredOnGithub = false;
+  if (configured && format === "ssh" && resolvedPubKey && gh.authenticated) {
+    try {
+      const res = await runWithTimeout("gh", ["api", "user/ssh_signing_keys", "--jq", ".[].key"]);
+      if (res.ok) {
+        const remoteKeys = res.stdout
+          .split("\n")
+          .map((k) => k.trim())
+          .filter(Boolean);
+        // Compare algorithm + key body, ignore trailing comment
+        const localParts = resolvedPubKey.split(/\s+/).slice(0, 2).join(" ");
+        registeredOnGithub = remoteKeys.some((rk) => {
+          const remoteParts = rk.split(/\s+/).slice(0, 2).join(" ");
+          return remoteParts === localParts;
+        });
+      }
+    } catch {
+      // Can't reach GitHub — assume not registered, but don't block
+    }
+  }
+
+  return {
+    configured,
+    format,
+    signingKey: signingKeyRaw,
+    gpgSign,
+    registeredOnGithub,
+  };
+}
+
 const GH_INSTALL_HINTS = [
   "macOS: brew install gh",
   "Linux (Debian/Ubuntu): apt install gh",
@@ -129,7 +205,7 @@ const GIT_INSTALL_HINTS = [
   "Other: see https://git-scm.com",
 ];
 
-function buildWarnings(gh: GhStatus, git: GitStatus): HealthWarning[] {
+function buildWarnings(gh: GhStatus, git: GitStatus, signing: SigningStatus): HealthWarning[] {
   const warnings: HealthWarning[] = [];
 
   if (!git.installed) {
@@ -166,10 +242,32 @@ function buildWarnings(gh: GhStatus, git: GitStatus): HealthWarning[] {
     });
   }
 
+  // Signing warnings — only surface when gh is authenticated (signing requires GitHub)
+  if (gh.authenticated) {
+    if (!signing.configured) {
+      warnings.push({
+        severity: "warning",
+        code: "signing-not-configured",
+        message:
+          "Your commits aren't being signed. Some repos require verified signatures and will reject your pushes. Click below to set up signing — no terminal needed.",
+        action: "open-signing-setup",
+      });
+    } else if (!signing.registeredOnGithub) {
+      warnings.push({
+        severity: "warning",
+        code: "signing-not-configured",
+        message:
+          "Your signing key isn't registered on GitHub yet. Click below to upload it — pushes to repos that require verified signatures will work after that.",
+        action: "open-signing-setup",
+      });
+    }
+  }
+
   return warnings;
 }
 
 export async function checkHealth(): Promise<HealthResult> {
   const [gh, git] = await Promise.all([checkGh(), checkGit()]);
-  return { gh, git, warnings: buildWarnings(gh, git) };
+  const signing = await checkSigning(gh);
+  return { gh, git, signing, warnings: buildWarnings(gh, git, signing) };
 }
