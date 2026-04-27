@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { hardReload, isChunkLoadError, tryConsumeReloadBudget } from "@/lib/autoheal";
+import { clearReloadBudget, hardReload, isChunkLoadError, tryConsumeReloadBudget } from "@/lib/autoheal";
 
 // Root-level error boundary. Catches anything that escapes layout.tsx — e.g.
 // a render error in the dashboard tree or a chunk failure during initial
@@ -80,7 +80,10 @@ export default function GlobalError({
           <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
             <button
               type="button"
-              onClick={() => hardReload()}
+              onClick={() => {
+                clearReloadBudget();
+                hardReload();
+              }}
               style={{
                 background: "#3aa688",
                 color: "#0b0d0c",
@@ -96,7 +99,16 @@ export default function GlobalError({
             </button>
             <button
               type="button"
-              onClick={() => reset()}
+              onClick={() => {
+                if (chunk) {
+                  // For chunk errors, reset() just re-runs the same broken
+                  // bundle. Force a fresh fetch instead.
+                  clearReloadBudget();
+                  hardReload();
+                } else {
+                  reset();
+                }
+              }}
               style={{
                 background: "transparent",
                 color: "#9aa6a0",

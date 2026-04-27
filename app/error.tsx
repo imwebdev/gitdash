@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { hardReload, isChunkLoadError, tryConsumeReloadBudget } from "@/lib/autoheal";
+import { clearReloadBudget, hardReload, isChunkLoadError, tryConsumeReloadBudget } from "@/lib/autoheal";
 
 // Page-level error boundary. Catches errors thrown inside the dashboard tree
 // (anything below RootLayout). Same auto-heal contract as global-error.tsx
@@ -59,14 +59,24 @@ export default function PageError({
       <div className="flex flex-wrap items-center justify-center gap-3">
         <button
           type="button"
-          onClick={() => hardReload()}
+          onClick={() => {
+            clearReloadBudget();
+            hardReload();
+          }}
           className="rounded-full bg-accent-clean px-5 py-2 text-[13px] font-semibold text-bg transition-colors hover:opacity-90"
         >
           Reload now
         </button>
         <button
           type="button"
-          onClick={() => reset()}
+          onClick={() => {
+            if (chunk) {
+              clearReloadBudget();
+              hardReload();
+            } else {
+              reset();
+            }
+          }}
           className="rounded-full border border-border px-5 py-2 text-[13px] font-medium text-fg-muted transition-colors hover:border-fg-muted hover:text-fg"
         >
           Try again
