@@ -16,6 +16,7 @@ const READ_ONLY_GIT_SUBCOMMANDS = new Set([
   "for-each-ref",
   "diff",
   "ls-files",
+  "ls-remote",
   "symbolic-ref",
 ]);
 
@@ -26,6 +27,11 @@ const MUTATING_GIT_SUBCOMMANDS = new Set([
   "merge",
   "stash",
   "rebase",
+  "add",
+  "commit",
+  "checkout",
+  "cherry-pick",
+  "reset",
 ]);
 
 export type GitRunMode = "read" | "mutate";

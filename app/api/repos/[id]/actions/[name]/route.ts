@@ -7,7 +7,9 @@ import {
   isValidPublishName,
   startAction,
   type PublishOptions,
+  type WipRestoreOptions,
 } from "@/lib/git/actions";
+import { isSafeRef } from "@/lib/git/exec";
 import { getScheduler } from "@/lib/scan/scheduler";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +42,7 @@ export async function POST(
 
   let commitMessage: string | undefined;
   let publish: PublishOptions | undefined;
+  let wipRestore: WipRestoreOptions | undefined;
   if (name === "commit-push" || name === "commit") {
     try {
       const body = (await req.json()) as { commitMessage?: unknown };
@@ -65,6 +68,20 @@ export async function POST(
     const visibility = body.visibility === "public" ? "public" : "private";
     const description = typeof body.description === "string" ? body.description : undefined;
     publish = { name: body.name, visibility, description };
+  } else if (name === "wip-restore") {
+    let body: { wipBranch?: unknown; deleteAfter?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return NextResponse.json({ error: "wip-restore requires a JSON body" }, { status: 400 });
+    }
+    if (typeof body.wipBranch !== "string" || !isSafeRef(body.wipBranch)) {
+      return NextResponse.json({ error: "invalid wipBranch" }, { status: 400 });
+    }
+    wipRestore = {
+      wipBranch: body.wipBranch,
+      deleteAfter: body.deleteAfter === true,
+    };
   }
 
   const snap = getSnapshot(repoId);
@@ -77,6 +94,7 @@ export async function POST(
       branch: snap?.branch ?? null,
       commitMessage,
       publish,
+      wipRestore,
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 400 });

@@ -34,6 +34,8 @@ const COPY: Record<string, { verb: string; confirm?: string }> = {
   "publish-to-github": { verb: "Publishing this repo to GitHub" },
   "open-editor": { verb: "Opening in your editor" },
   "open-terminal": { verb: "Opening a terminal" },
+  "wip-stash-push": { verb: "Backing up your work-in-progress to GitHub" },
+  "wip-restore": { verb: "Restoring work-in-progress from another machine" },
 };
 
 const PUBLISH_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -52,6 +54,14 @@ interface ChangesResponse {
   truncated: boolean;
 }
 
+interface WipEntry {
+  branch: string;
+  source: string | null;
+  machineLabel: string;
+  timestamp: string | null;
+  isOwn: boolean;
+}
+
 export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const snap = repo.snapshot;
   const pushCount = snap?.remoteAhead ?? snap?.ahead ?? 0;
@@ -59,9 +69,13 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const isCommitPush = action === "commit-push";
   const isCommitFlow = isCommit || isCommitPush;
   const isPublish = action === "publish-to-github";
+  const isWipPush = action === "wip-stash-push";
+  const isWipRestore = action === "wip-restore";
   const needsConfirm =
     isCommitFlow ||
     isPublish ||
+    isWipPush ||
+    isWipRestore ||
     action === "merge" ||
     (action === "push" && pushCount > DESTRUCTIVE_CONFIRMATION_LIMIT);
 
@@ -73,7 +87,13 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
   const [publishVisibility, setPublishVisibility] = useState<"private" | "public">("private");
   const [publishDescription, setPublishDescription] = useState<string>("");
   const [changes, setChanges] = useState<ChangesResponse | null>(null);
-  const [changesLoading, setChangesLoading] = useState(isCommitFlow);
+  const [changesLoading, setChangesLoading] = useState(isCommitFlow || isWipPush);
+  // WIP restore state
+  const [wipList, setWipList] = useState<WipEntry[]>([]);
+  const [wipListLoading, setWipListLoading] = useState(isWipRestore);
+  const [wipListError, setWipListError] = useState<string | null>(null);
+  const [selectedWip, setSelectedWip] = useState<string>("");
+  const [deleteAfterRestore, setDeleteAfterRestore] = useState(true);
   const [mounted, setMounted] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -156,9 +176,9 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     };
   }, [mounted]);
 
-  // Fetch changes preview when entering any commit-flow confirm
+  // Fetch changes preview when entering any commit-flow or wip-push confirm
   useEffect(() => {
-    if (!isCommitFlow || phase !== "confirm") return;
+    if ((!isCommitFlow && !isWipPush) || phase !== "confirm") return;
     let cancelled = false;
     (async () => {
       try {
@@ -167,7 +187,7 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
           setChanges((await res.json()) as ChangesResponse);
         }
       } catch {
-        // best-effort; user can still commit blind
+        // best-effort; user can still proceed blind
       } finally {
         if (!cancelled) setChangesLoading(false);
       }
@@ -175,7 +195,36 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isCommitFlow, phase, repo.id]);
+  }, [isCommitFlow, isWipPush, phase, repo.id]);
+
+  // Fetch WIP list when entering wip-restore confirm
+  useEffect(() => {
+    if (!isWipRestore || phase !== "confirm") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/repos/${repo.id}/wip-list`);
+        if (!res.ok) {
+          if (!cancelled) setWipListError("Could not load WIP branches. Check your GitHub connection.");
+          return;
+        }
+        const data = (await res.json()) as { wips: WipEntry[] };
+        if (!cancelled) {
+          setWipList(data.wips);
+          if (data.wips.length > 0 && data.wips[0]) {
+            setSelectedWip(data.wips[0].branch);
+          }
+        }
+      } catch {
+        if (!cancelled) setWipListError("Network error loading WIP branches.");
+      } finally {
+        if (!cancelled) setWipListLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isWipRestore, phase, repo.id]);
 
   useEffect(() => {
     if (phase !== "running") return;
@@ -192,6 +241,8 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
             visibility: publishVisibility,
             description: publishDescription.trim(),
           };
+        } else if (isWipRestore) {
+          body = { wipBranch: selectedWip, deleteAfter: deleteAfterRestore };
         }
         const res = await fetch(`/api/repos/${repo.id}/actions/${action}`, {
           method: "POST",
@@ -244,10 +295,13 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
     csrfToken,
     isCommitFlow,
     isPublish,
+    isWipRestore,
     commitMessage,
     publishName,
     publishVisibility,
     publishDescription,
+    selectedWip,
+    deleteAfterRestore,
   ]);
 
   useEffect(() => {
@@ -297,6 +351,29 @@ export function ActionModal({ repo, action, csrfToken, onClose }: Props) {
             loading={changesLoading}
             commitMessage={commitMessage}
             onMessageChange={setCommitMessage}
+            onCancel={onClose}
+            onConfirm={() => setPhase("running")}
+          />
+        )}
+
+        {phase === "confirm" && isWipPush && (
+          <WipStashPushConfirm
+            changes={changes}
+            loading={changesLoading}
+            onCancel={onClose}
+            onConfirm={() => setPhase("running")}
+          />
+        )}
+
+        {phase === "confirm" && isWipRestore && (
+          <WipRestoreConfirm
+            wips={wipList}
+            loading={wipListLoading}
+            error={wipListError}
+            selectedWip={selectedWip}
+            deleteAfter={deleteAfterRestore}
+            onSelectWip={setSelectedWip}
+            onDeleteAfterChange={setDeleteAfterRestore}
             onCancel={onClose}
             onConfirm={() => setPhase("running")}
           />
@@ -644,4 +721,227 @@ function statusGlyph(status: string): string {
   if (s.includes("R")) return "→";          // renamed
   if (s.includes("M")) return "~";          // modified
   return "·";
+}
+
+function relativeTimeLocal(isoTimestamp: string | null): string {
+  if (!isoTimestamp) return "unknown time";
+  try {
+    const ts = new Date(isoTimestamp).getTime();
+    const deltaSec = Math.floor((Date.now() - ts) / 1000);
+    if (deltaSec < 60) return "just now";
+    if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`;
+    if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`;
+    if (deltaSec < 86400 * 30) return `${Math.floor(deltaSec / 86400)}d ago`;
+    return `${Math.floor(deltaSec / (86400 * 30))}mo ago`;
+  } catch {
+    return "unknown time";
+  }
+}
+
+function WipStashPushConfirm({
+  changes,
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  changes: ChangesResponse | null;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const total = changes?.total ?? 0;
+  const suspicious = changes?.suspicious ?? [];
+
+  return (
+    <div className="flex flex-col gap-5 overflow-y-auto px-6 py-6">
+      <p className="text-[13.5px] leading-relaxed text-fg-muted">
+        Gitdash will save your current work-in-progress to a private branch on GitHub.
+        Your working files stay exactly as they are — nothing is committed to your main branch.
+        You can restore this WIP on any other machine running gitdash.
+      </p>
+
+      {loading && (
+        <p className="text-[13px] text-fg-dim">Checking what will be backed up…</p>
+      )}
+
+      {!loading && changes && total === 0 && (
+        <p className="text-[13px] text-fg-muted">
+          No changes detected. Nothing to back up.
+        </p>
+      )}
+
+      {!loading && changes && total > 0 && (
+        <div>
+          <p className="text-[14px] text-fg">
+            <span className="display-italic">{total}</span>{" "}
+            file{total === 1 ? "" : "s"} will be backed up to GitHub.
+          </p>
+          <FilePreview files={changes.files.slice(0, 8)} />
+          {changes.files.length > 8 && (
+            <p className="mt-2 text-[11px] text-fg-dim">…and {changes.files.length - 8} more</p>
+          )}
+        </div>
+      )}
+
+      {suspicious.length > 0 && (
+        <div className="flex gap-3 rounded-lg border border-accent-attention/40 bg-accent-attention/8 p-4">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-accent-attention" />
+          <div className="text-[12.5px] text-fg-muted">
+            <p className="font-medium text-fg">
+              Heads up — gitdash flagged {suspicious.length} file{suspicious.length === 1 ? "" : "s"} that look sensitive:
+            </p>
+            <ul className="mt-1.5 space-y-0.5 mono text-[11.5px]">
+              {suspicious.slice(0, 6).map((f) => (
+                <li key={f.path} className="text-accent-attention">
+                  {f.path}
+                  <span className="ml-2 text-fg-dim">
+                    ({f.reason === "secret" ? "looks like a secret" : "large file"})
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[11.5px] text-fg-dim">
+              These will be pushed to GitHub. Make sure your WIP branch is private.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-1 flex justify-end gap-3">
+        <button
+          onClick={onCancel}
+          className="rounded-full border border-border px-4 py-1.5 text-[13px] font-medium text-fg-muted hover:border-fg-muted hover:text-fg"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={!loading && total === 0}
+          className={cn(
+            "rounded-full border px-5 py-1.5 text-[13px] font-medium transition-all",
+            "border-accent-dirty/45 bg-accent-dirty/15 text-accent-dirty hover:bg-accent-dirty/25",
+            "disabled:cursor-not-allowed disabled:opacity-40",
+          )}
+        >
+          Backup WIP
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WipRestoreConfirm({
+  wips,
+  loading,
+  error,
+  selectedWip,
+  deleteAfter,
+  onSelectWip,
+  onDeleteAfterChange,
+  onCancel,
+  onConfirm,
+}: {
+  wips: WipEntry[];
+  loading: boolean;
+  error: string | null;
+  selectedWip: string;
+  deleteAfter: boolean;
+  onSelectWip: (branch: string) => void;
+  onDeleteAfterChange: (v: boolean) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-5 overflow-y-auto px-6 py-6">
+      <p className="text-[13.5px] leading-relaxed text-fg-muted">
+        Pick a backed-up WIP to restore. Gitdash will apply those changes to your working tree
+        without committing anything — you can keep editing right where the other machine left off.
+      </p>
+
+      {loading && (
+        <p className="text-[13px] text-fg-dim">Looking for available WIP backups…</p>
+      )}
+
+      {error && (
+        <p className="text-[13px] text-accent-attention">{error}</p>
+      )}
+
+      {!loading && !error && wips.length === 0 && (
+        <p className="text-[13px] text-fg-muted">
+          No WIP backups found on GitHub. Use the Backup WIP button on another machine first.
+        </p>
+      )}
+
+      {!loading && !error && wips.length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-[12px] uppercase tracking-wider text-fg-dim">Available backups</legend>
+          <div className="flex flex-col gap-2">
+            {wips.map((wip) => (
+              <label
+                key={wip.branch}
+                className={cn(
+                  "flex cursor-pointer items-start gap-2.5 rounded-lg border bg-bg/40 p-3 text-[13px]",
+                  selectedWip === wip.branch
+                    ? "border-accent-pull/50 bg-accent-pull/8"
+                    : "border-border hover:border-fg-dim/40",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="wip-branch"
+                  value={wip.branch}
+                  checked={selectedWip === wip.branch}
+                  onChange={() => onSelectWip(wip.branch)}
+                  className="mt-0.5 accent-accent-pull"
+                />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="mono text-[12px] font-medium text-fg">{wip.branch}</span>
+                  {wip.source && (
+                    <span className="text-[11.5px] text-fg-muted">
+                      From branch: <span className="mono">{wip.source}</span>
+                    </span>
+                  )}
+                  <span className="text-[11px] text-fg-dim">
+                    {relativeTimeLocal(wip.timestamp)}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      {!loading && !error && wips.length > 0 && (
+        <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-fg-muted">
+          <input
+            type="checkbox"
+            checked={deleteAfter}
+            onChange={(e) => onDeleteAfterChange(e.target.checked)}
+            className="accent-accent-pull"
+          />
+          Delete remote backup after restoring
+        </label>
+      )}
+
+      <div className="mt-1 flex justify-end gap-3">
+        <button
+          onClick={onCancel}
+          className="rounded-full border border-border px-4 py-1.5 text-[13px] font-medium text-fg-muted hover:border-fg-muted hover:text-fg"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={loading || wips.length === 0 || !selectedWip}
+          className={cn(
+            "rounded-full border px-5 py-1.5 text-[13px] font-medium transition-all",
+            "border-accent-pull/45 bg-accent-pull/15 text-accent-pull hover:bg-accent-pull/25",
+            "disabled:cursor-not-allowed disabled:opacity-40",
+          )}
+        >
+          Restore WIP
+        </button>
+      </div>
+    </div>
+  );
 }
