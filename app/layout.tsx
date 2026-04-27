@@ -3,6 +3,10 @@ import { Instrument_Serif, Instrument_Sans, IBM_Plex_Mono } from "next/font/goog
 import "./globals.css";
 import { VersionBadge } from "@/components/VersionBadge";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { displayLabel } from "@/lib/security/label";
+import { hostname } from "node:os";
 
 const serif = Instrument_Serif({
   subsets: ["latin"],
@@ -26,10 +30,28 @@ const mono = IBM_Plex_Mono({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: "gitdash",
-  description: "Local git repo status dashboard",
-};
+async function getStoredLabel(): Promise<string | null> {
+  try {
+    const xdg = process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? ".", ".config");
+    const configPath = path.join(xdg, "gitdash", "config.json");
+    const raw = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return typeof parsed.machineLabel === "string" ? parsed.machineLabel : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const stored = await getStoredLabel();
+  const label = displayLabel(stored, hostname());
+  const isDefault = !stored || stored.trim().length === 0;
+  const title = isDefault ? "gitdash" : `${label} · gitdash`;
+  return {
+    title,
+    description: "Local git repo status dashboard",
+  };
+}
 
 // Runs before paint to set the theme class — prevents the wrong-theme flash
 // on first render. Reads localStorage('gitdash-theme'), falls back to OS preference.

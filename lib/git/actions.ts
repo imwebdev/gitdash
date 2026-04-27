@@ -2,9 +2,13 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { assertSafeRef } from "./exec";
 import { translateGitError, friendlyStepLabel } from "./error-hints";
 import { getDb } from "@/lib/db/schema";
+import { sanitizeLabel } from "@/lib/security/label";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,7 +23,9 @@ export type ActionName =
   | "open-terminal"
   | "commit"
   | "commit-push"
-  | "publish-to-github";
+  | "publish-to-github"
+  | "wip-stash-push"
+  | "wip-restore";
 
 export interface PublishOptions {
   name: string;
@@ -52,6 +58,11 @@ export function getRun(id: string): ActionRun | null {
   return runs.get(id) ?? null;
 }
 
+export interface WipRestoreOptions {
+  wipBranch: string;
+  deleteAfter: boolean;
+}
+
 interface StartOptions {
   repoId: number;
   repoPath: string;
@@ -59,6 +70,7 @@ interface StartOptions {
   branch: string | null;
   commitMessage?: string;
   publish?: PublishOptions;
+  wipRestore?: WipRestoreOptions;
 }
 
 export function startAction(opts: StartOptions): ActionRun {
@@ -83,6 +95,47 @@ export function startAction(opts: StartOptions): ActionRun {
     const pushAfter = opts.action === "commit-push";
     setImmediate(() => {
       executeCommit(run, opts.repoPath, message, opts.branch, pushAfter).catch((err) => {
+        run.emitter.emit("done", { exitCode: -1 });
+        run.exitCode = -1;
+        run.finishedAt = Date.now();
+        recordRunFinish(run);
+        run.lines.push(`[fatal] ${(err as Error).message}`);
+      });
+    });
+    getDb().prepare(
+      "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
+    ).run(opts.repoId, opts.action, run.startedAt);
+    return run;
+  }
+
+  if (opts.action === "wip-stash-push") {
+    setImmediate(() => {
+      executeWipStashPush(run, opts.repoPath, opts.branch).catch((err) => {
+        run.emitter.emit("done", { exitCode: -1 });
+        run.exitCode = -1;
+        run.finishedAt = Date.now();
+        recordRunFinish(run);
+        run.lines.push(`[fatal] ${(err as Error).message}`);
+      });
+    });
+    getDb().prepare(
+      "INSERT INTO actions_log (repo_id, action, started_at) VALUES (?, ?, ?)",
+    ).run(opts.repoId, opts.action, run.startedAt);
+    return run;
+  }
+
+  if (opts.action === "wip-restore") {
+    if (!opts.wipRestore) {
+      run.emitter.emit("done", { exitCode: -1 });
+      run.exitCode = -1;
+      run.finishedAt = Date.now();
+      recordRunFinish(run);
+      run.lines.push("[fatal] wip-restore requires wipBranch option");
+      return run;
+    }
+    const wipOpts = opts.wipRestore;
+    setImmediate(() => {
+      executeWipRestore(run, opts.repoPath, wipOpts).catch((err) => {
         run.emitter.emit("done", { exitCode: -1 });
         run.exitCode = -1;
         run.finishedAt = Date.now();
@@ -186,6 +239,10 @@ function buildArgs(action: ActionName, branch: string | null): string[] {
       return [];
     case "publish-to-github":
       return [];
+    case "wip-stash-push":
+      return [];
+    case "wip-restore":
+      return [];
   }
 }
 
@@ -228,6 +285,10 @@ function friendlyActionLabel(action: ActionName): string {
       return "Commit & push";
     case "publish-to-github":
       return "Publish to GitHub";
+    case "wip-stash-push":
+      return "Backup WIP";
+    case "wip-restore":
+      return "Restore WIP";
   }
 }
 
@@ -734,6 +795,335 @@ function executeRun(run: ActionRun, executable: string, args: string[], cwd?: st
   });
 }
 
+// ---------------------------------------------------------------------------
+// Machine-label helper
+// ---------------------------------------------------------------------------
+
+async function getMachineLabel(): Promise<string> {
+  try {
+    const xdg = process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? ".", ".config");
+    const configPath = path.join(xdg, "gitdash", "config.json");
+    const raw = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed.machineLabel === "string" && parsed.machineLabel.trim().length > 0) {
+      return sanitizeLabel(parsed.machineLabel.trim());
+    }
+  } catch {
+    // fall through
+  }
+  return sanitizeLabel(hostname()) || "gitdash";
+}
+
+// ---------------------------------------------------------------------------
+// WIP stash-push: stash → wip branch → commit → push → return to source
+// ---------------------------------------------------------------------------
+
+async function executeWipStashPush(
+  run: ActionRun,
+  repoPath: string,
+  branch: string | null,
+): Promise<void> {
+  const emit = (text: string) => {
+    run.lines.push(text);
+    run.emitter.emit("line", text);
+  };
+
+  // Capture the current branch before stashing
+  const sourceBranch = branch;
+  if (!sourceBranch || sourceBranch === "(detached)") {
+    emit("[gitdash] ✗ Cannot back up WIP from a detached HEAD. Switch to a named branch first.");
+    run.finishedAt = Date.now();
+    run.exitCode = 1;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 1 });
+    return;
+  }
+
+  // Step 1: stash push
+  emit("[gitdash] Step 1/10: Stashing your current work…");
+  const stashCode = await spawnGitStep(run, emit, ["stash", "push", "-u", "-m", "gitdash:wip"], repoPath);
+  if (stashCode !== 0) {
+    // git stash returns 1 with "No local changes to save" — that's an early-exit, not an error
+    const lastLines = run.lines.slice(-5).join("\n");
+    if (lastLines.includes("No local changes to save") || lastLines.includes("nothing to save")) {
+      emit("[gitdash] Nothing to back up — your working tree is already clean.");
+      run.finishedAt = Date.now();
+      run.exitCode = 0;
+      recordRunFinish(run);
+      run.emitter.emit("done", { exitCode: 0 });
+      return;
+    }
+    emit(`[gitdash] ✗ ${friendlyStepLabel("stash")} didn't complete (exit ${stashCode}).`);
+    emitHint(emit, run.lines);
+    run.finishedAt = Date.now();
+    run.exitCode = stashCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: stashCode });
+    return;
+  }
+
+  // Check if stash was actually created (exit 0 can happen with no changes in some git versions)
+  let stashRef = "";
+  try {
+    const result = await execFileAsync("git", ["-C", repoPath, "stash", "list", "--max-count=1"], {
+      timeout: 5_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    stashRef = result.stdout.trim();
+  } catch {
+    // continue
+  }
+  if (!stashRef) {
+    emit("[gitdash] Nothing to back up — your working tree is already clean.");
+    run.finishedAt = Date.now();
+    run.exitCode = 0;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 0 });
+    return;
+  }
+
+  // Step 2: read machine label
+  emit("[gitdash] Step 2/10: Reading machine label…");
+  const machineLabel = await getMachineLabel();
+  const wipBranch = `wip/${machineLabel}`;
+  emit(`[gitdash] WIP branch will be: ${wipBranch}`);
+
+  // Step 3: checkout WIP branch (create or reset)
+  emit(`[gitdash] Step 3/10: Switching to ${wipBranch}…`);
+  assertSafeRef(wipBranch);
+  const checkoutCode = await spawnGitStep(run, emit, ["checkout", "-B", wipBranch], repoPath);
+  if (checkoutCode !== 0) {
+    emit(`[gitdash] ✗ Could not switch to ${wipBranch} (exit ${checkoutCode}).`);
+    // Try to recover: pop the stash back on the original branch
+    emit("[gitdash] Recovering: restoring your stash on the original branch…");
+    await spawnGitStep(run, emit, ["checkout", sourceBranch], repoPath);
+    await spawnGitStep(run, emit, ["stash", "pop"], repoPath);
+    run.finishedAt = Date.now();
+    run.exitCode = checkoutCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: checkoutCode });
+    return;
+  }
+
+  // Step 4: apply stash
+  emit("[gitdash] Step 4/10: Applying stashed changes onto WIP branch…");
+  const applyCode = await spawnGitStep(run, emit, ["stash", "apply"], repoPath);
+  if (applyCode !== 0) {
+    emit(`[gitdash] ✗ Stash apply failed (exit ${applyCode}). Recovering…`);
+    await spawnGitStep(run, emit, ["checkout", sourceBranch], repoPath);
+    await spawnGitStep(run, emit, ["stash", "pop"], repoPath);
+    run.finishedAt = Date.now();
+    run.exitCode = applyCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: applyCode });
+    return;
+  }
+
+  // Step 5: stage all
+  emit("[gitdash] Step 5/10: Staging all changes…");
+  const addCode = await spawnGitStep(run, emit, ["add", "-A"], repoPath);
+  if (addCode !== 0) {
+    emit(`[gitdash] ✗ Staging failed (exit ${addCode}). Recovering…`);
+    await spawnGitStep(run, emit, ["checkout", sourceBranch], repoPath);
+    await spawnGitStep(run, emit, ["stash", "pop"], repoPath);
+    run.finishedAt = Date.now();
+    run.exitCode = addCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: addCode });
+    return;
+  }
+
+  // Step 6: (secret scan gate happens in route before reaching here)
+
+  // Step 7: commit with encoded source branch + timestamp
+  const isoTimestamp = new Date().toISOString();
+  const wipMessage = `WIP from ${sourceBranch} · ${isoTimestamp}`;
+  emit(`[gitdash] Step 7/10: Committing: "${wipMessage}"…`);
+  const commitCode = await spawnGitStep(run, emit, ["commit", "-m", wipMessage], repoPath);
+  if (commitCode !== 0) {
+    emit(`[gitdash] ✗ Commit failed (exit ${commitCode}). Recovering…`);
+    await spawnGitStep(run, emit, ["checkout", sourceBranch], repoPath);
+    await spawnGitStep(run, emit, ["stash", "pop"], repoPath);
+    run.finishedAt = Date.now();
+    run.exitCode = commitCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: commitCode });
+    return;
+  }
+
+  // Step 8: push with --force-with-lease (NOT --force)
+  emit(`[gitdash] Step 8/10: Pushing ${wipBranch} to origin…`);
+  const pushCode = await spawnGitStep(run, emit, ["push", "-u", "origin", wipBranch, "--force-with-lease"], repoPath);
+  if (pushCode !== 0) {
+    emit(`[gitdash] ✗ Push failed (exit ${pushCode}). Your WIP is saved locally on ${wipBranch}.`);
+    emit("[gitdash] hint: Another device may have pushed a newer WIP to the same branch. Check and retry.");
+    // Still return to source branch and restore stash
+    await spawnGitStep(run, emit, ["checkout", sourceBranch], repoPath);
+    await spawnGitStep(run, emit, ["stash", "pop"], repoPath);
+    run.finishedAt = Date.now();
+    run.exitCode = pushCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: pushCode });
+    return;
+  }
+
+  // Step 9: return to source branch
+  emit(`[gitdash] Step 9/10: Returning to ${sourceBranch}…`);
+  assertSafeRef(sourceBranch);
+  const returnCode = await spawnGitStep(run, emit, ["checkout", sourceBranch], repoPath);
+  if (returnCode !== 0) {
+    emit(`[gitdash] ✗ Could not return to ${sourceBranch} (exit ${returnCode}).`);
+    // WIP is already pushed so this is non-fatal
+  }
+
+  // Step 10: restore working changes locally via stash pop
+  emit("[gitdash] Step 10/10: Restoring your working changes locally…");
+  const popCode = await spawnGitStep(run, emit, ["stash", "pop"], repoPath);
+  if (popCode !== 0) {
+    emit(`[gitdash] ✗ Stash pop failed (exit ${popCode}). Your work is saved on GitHub at ${wipBranch}.`);
+    emit("[gitdash] hint: Run 'git stash pop' manually if your local files look wrong.");
+  }
+
+  emit(`[gitdash] ✓ WIP backed up to ${wipBranch} on GitHub. You can keep working — nothing was committed to ${sourceBranch}.`);
+  run.finishedAt = Date.now();
+  run.exitCode = 0;
+  recordRunFinish(run);
+  run.emitter.emit("done", { exitCode: 0 });
+}
+
+// ---------------------------------------------------------------------------
+// WIP restore: fetch → cherry-pick → optionally delete remote WIP branch
+// ---------------------------------------------------------------------------
+
+async function executeWipRestore(
+  run: ActionRun,
+  repoPath: string,
+  opts: WipRestoreOptions,
+): Promise<void> {
+  const emit = (text: string) => {
+    run.lines.push(text);
+    run.emitter.emit("line", text);
+  };
+
+  const { wipBranch, deleteAfter } = opts;
+  assertSafeRef(wipBranch);
+
+  // Parse source branch from the WIP branch name — we'll get it from the commit message
+  // Step 1: fetch origin to refresh remote branches
+  emit("[gitdash] Step 1: Fetching latest remote branches…");
+  const fetchCode = await spawnGitStep(run, emit, ["fetch", "origin"], repoPath);
+  if (fetchCode !== 0) {
+    emit(`[gitdash] ✗ Fetch failed (exit ${fetchCode}). Check your internet connection and GitHub auth.`);
+    run.finishedAt = Date.now();
+    run.exitCode = fetchCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: fetchCode });
+    return;
+  }
+
+  // Read the WIP commit message to determine the source branch
+  let sourceBranch: string | null = null;
+  try {
+    const logResult = await execFileAsync(
+      "git",
+      ["-C", repoPath, "log", "-1", "--format=%s", `origin/${wipBranch}`],
+      { timeout: 10_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+    );
+    const subject = logResult.stdout.trim();
+    // Format: "WIP from <branch> · <iso>"
+    const match = subject.match(/^WIP from (.+?) · \d{4}-/);
+    if (match?.[1]) {
+      sourceBranch = match[1];
+    }
+  } catch {
+    // Could not parse — continue without auto-switching
+  }
+
+  // Step 4: check for uncommitted changes
+  let hasDirty = false;
+  try {
+    const statusResult = await execFileAsync(
+      "git",
+      ["-C", repoPath, "status", "--porcelain=v2"],
+      { timeout: 5_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+    );
+    hasDirty = statusResult.stdout.trim().length > 0;
+  } catch {
+    // assume clean
+  }
+
+  if (hasDirty) {
+    emit("[gitdash] ✗ You have uncommitted changes. Please stash or commit your work before restoring WIP.");
+    emit("[gitdash] hint: Use the Backup WIP button to save your current work first, or use the Commit button to commit it.");
+    run.finishedAt = Date.now();
+    run.exitCode = 1;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: 1 });
+    return;
+  }
+
+  // Switch to source branch if we know it
+  if (sourceBranch) {
+    assertSafeRef(sourceBranch);
+    emit(`[gitdash] Switching to source branch: ${sourceBranch}…`);
+    const checkoutCode = await spawnGitStep(run, emit, ["checkout", sourceBranch], repoPath);
+    if (checkoutCode !== 0) {
+      emit(`[gitdash] ✗ Could not switch to ${sourceBranch} (exit ${checkoutCode}). Branch may not exist locally.`);
+      emit(`[gitdash] hint: Create a local branch called '${sourceBranch}' first, then retry.`);
+      run.finishedAt = Date.now();
+      run.exitCode = checkoutCode;
+      recordRunFinish(run);
+      run.emitter.emit("done", { exitCode: checkoutCode });
+      return;
+    }
+  }
+
+  // Step 5: cherry-pick --no-commit to apply WIP as working-tree edits
+  emit(`[gitdash] Applying WIP from ${wipBranch} as working changes (not committing)…`);
+  const cherryCode = await spawnGitStep(
+    run,
+    emit,
+    ["cherry-pick", "--no-commit", `origin/${wipBranch}`],
+    repoPath,
+  );
+  if (cherryCode !== 0) {
+    emit(`[gitdash] ✗ Could not apply WIP (exit ${cherryCode}). There may be conflicts.`);
+    emit("[gitdash] hint: Resolve any conflicts shown above, then the changes will be in your working tree.");
+    // Abort cherry-pick to clean up state
+    await spawnGitStep(run, emit, ["cherry-pick", "--abort"], repoPath);
+    run.finishedAt = Date.now();
+    run.exitCode = cherryCode;
+    recordRunFinish(run);
+    run.emitter.emit("done", { exitCode: cherryCode });
+    return;
+  }
+
+  // Reset staged changes back to working tree (we want edits, not staged)
+  emit("[gitdash] Unstaging changes so they appear as working-tree edits…");
+  await spawnGitStep(run, emit, ["reset", "HEAD"], repoPath);
+
+  // Step 6: optionally delete remote WIP branch
+  if (deleteAfter) {
+    emit(`[gitdash] Deleting remote WIP branch ${wipBranch}…`);
+    const deleteCode = await spawnGitStep(run, emit, ["push", "origin", "--delete", wipBranch], repoPath);
+    if (deleteCode !== 0) {
+      emit(`[gitdash] ✗ Could not delete remote branch (exit ${deleteCode}). You can delete it manually from GitHub.`);
+      // Non-fatal — WIP was still restored
+    } else {
+      emit(`[gitdash] ✓ Remote branch ${wipBranch} deleted.`);
+    }
+  }
+
+  const branchDesc = sourceBranch ? ` on branch ${sourceBranch}` : "";
+  emit(`[gitdash] ✓ WIP from ${wipBranch} restored${branchDesc}. Your changes are in the working tree — nothing is committed.`);
+  run.finishedAt = Date.now();
+  run.exitCode = 0;
+  recordRunFinish(run);
+  run.emitter.emit("done", { exitCode: 0 });
+}
+
+// ---------------------------------------------------------------------------
+
 const VALID_ACTIONS: ReadonlySet<string> = new Set([
   "fetch",
   "pull",
@@ -746,6 +1136,8 @@ const VALID_ACTIONS: ReadonlySet<string> = new Set([
   "commit",
   "commit-push",
   "publish-to-github",
+  "wip-stash-push",
+  "wip-restore",
 ]);
 
 export function isValidAction(value: string): value is ActionName {

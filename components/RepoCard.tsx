@@ -73,6 +73,7 @@ function primaryActions(
       return [
         { label: "Commit", action: "commit", variant: "secondary" },
         { label: "Commit & push", action: "commit-push", variant: "primary" },
+        { label: "Backup WIP", action: "wip-stash-push", variant: "secondary" },
       ];
     }
     return [{ label: "Commit", action: "commit", variant: "primary" }];
@@ -240,6 +241,7 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
             csrfToken={csrfToken}
             expanded={expanded}
             snap={snap}
+            onModalAction={setModalAction}
           />
         </div>
 
@@ -260,6 +262,7 @@ export function RepoCard({ repo, kind, csrfToken, expanded, onToggle }: Props) {
               csrfToken={csrfToken}
               expanded={expanded}
               snap={snap}
+              onModalAction={setModalAction}
             />
           </div>
 
@@ -453,12 +456,14 @@ function RowIcons({
   csrfToken,
   expanded,
   snap,
+  onModalAction,
 }: {
   ghUrl: string | null;
   repoId: number;
   csrfToken: string;
   expanded: boolean;
   snap: import("@/lib/db/repos").SnapshotRow | null;
+  onModalAction: (action: string) => void;
 }) {
   const [refreshState, setRefreshState] = useState<"idle" | "spinning" | "error" | "rate-limited">("idle");
 
@@ -512,6 +517,20 @@ function RowIcons({
 
   return (
     <div className="flex items-center justify-end gap-0.5 sm:gap-1">
+      {ghUrl && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onModalAction("wip-restore");
+          }}
+          title="Restore work-in-progress from another machine"
+          aria-label="Restore WIP from another machine"
+          className="inline-flex h-11 items-center justify-center rounded-full px-2 text-[11px] font-medium text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg sm:h-7"
+        >
+          Restore WIP
+        </button>
+      )}
       <div className="relative flex items-center">
         {isStuck && refreshState === "idle" && (
           <span
