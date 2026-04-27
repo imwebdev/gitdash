@@ -91,8 +91,8 @@ export function UpdateBanner() {
         type="button"
         onClick={() => hardReload()}
         className={cn(
-          "rounded-md bg-accent-positive px-3 py-1 text-sm font-medium",
-          "text-bg hover:opacity-90",
+          "rounded-full border border-accent-clean/45 bg-accent-clean/15 px-3 py-1 text-sm font-medium",
+          "text-accent-clean hover:bg-accent-clean/25",
         )}
       >
         Reload now
